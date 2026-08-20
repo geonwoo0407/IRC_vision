@@ -990,6 +990,8 @@ class LinePathVisualizer(Node):
     @staticmethod
     def _motion_color(motion: str) -> tuple[int, int, int]:
         """Return a stable BGR color for each final motion."""
+        if motion.startswith("RECOVER_"):
+            return (255, 255, 0)
         return {
             "STRAIGHT": (0, 220, 0),
             "LEFT": (255, 160, 0),
@@ -1031,8 +1033,8 @@ class LinePathVisualizer(Node):
             )
             return
 
-        if motion in {"RECOVER_LEFT", "RECOVER_RIGHT"}:
-            direction = -1 if motion == "RECOVER_LEFT" else 1
+        if motion.startswith("RECOVER_"):
+            direction = -1 if motion.startswith("RECOVER_LEFT") else 1
             arrow_length = int(width * 0.18)
             end = (start[0] + direction * arrow_length, start[1])
             cv2.arrowedLine(
@@ -1161,10 +1163,10 @@ class LinePathVisualizer(Node):
         )
         quality = self._format_number(command.get("line_quality"), 2)
 
-        if motion in {"RECOVER_LEFT", "RECOVER_RIGHT"}:
+        if motion.startswith("RECOVER_"):
             lines = [
                 f"NAVIGATION : {motion}",
-                f"SIDE SPEED {lateral_speed} m/s  |  FORWARD STOP",
+                f"SIDE SPEED {lateral_speed} m/s  |  TURN {turn_rate} rad/s",
                 f"SIDE MOVE {lateral_distance} m  |  {duration} s",
                 "MODE : RETURN TO LINE CENTER",
                 "CURVE PREVIEW DISABLED DURING RECOVERY",

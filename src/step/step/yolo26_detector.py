@@ -21,6 +21,10 @@ from rcl_interfaces.srv import SetParameters
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy
+from rclpy.qos import HistoryPolicy
+from rclpy.qos import QoSProfile
+from rclpy.qos import ReliabilityPolicy
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
@@ -264,11 +268,17 @@ class Yolo26Detector(Node):
         self.annotated_publisher = self.create_publisher(
             Image, annotated_topic, qos_profile_sensor_data
         )
+        latest_image_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
         self.subscription = self.create_subscription(
             Image,
             image_topic,
             self._image_callback,
-            qos_profile_sensor_data,
+            latest_image_qos,
         )
         self.create_subscription(
             String,
@@ -1149,6 +1159,10 @@ class Yolo26Detector(Node):
             "RIGHT": "RIGHT",
             "RECOVER_LEFT": "RECOVER LINE LEFT",
             "RECOVER_RIGHT": "RECOVER LINE RIGHT",
+            "RECOVER_LEFT_TURN_LEFT": "RECOVER LEFT / TURN LEFT",
+            "RECOVER_LEFT_TURN_RIGHT": "RECOVER LEFT / TURN RIGHT",
+            "RECOVER_RIGHT_TURN_LEFT": "RECOVER RIGHT / TURN LEFT",
+            "RECOVER_RIGHT_TURN_RIGHT": "RECOVER RIGHT / TURN RIGHT",
             "STOP": "STOP",
         }
         ball_labels = {

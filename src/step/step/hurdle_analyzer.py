@@ -326,6 +326,8 @@ class HurdleAnalyzer(Node):
     def _sample_depths(
         self,
         bbox: list[int],
+        source_width: int | None,
+        source_height: int | None,
     ) -> tuple[float | None, float | None, float | None, int]:
         depth_age = self._depth_age_sec()
         if (
@@ -336,7 +338,21 @@ class HurdleAnalyzer(Node):
             or self.latest_depth_image.ndim != 2
         ):
             return None, None, None, 0
-        left, top, right, bottom = bbox
+        depth_height, depth_width = self.latest_depth_image.shape[:2]
+        source_width = int(source_width or depth_width)
+        source_height = int(source_height or depth_height)
+        scale_x = depth_width / max(source_width, 1)
+        scale_y = depth_height / max(source_height, 1)
+        left, top, right, bottom = (
+            int(round(bbox[0] * scale_x)),
+            int(round(bbox[1] * scale_y)),
+            int(round(bbox[2] * scale_x)),
+            int(round(bbox[3] * scale_y)),
+        )
+        left = max(0, min(depth_width - 1, left))
+        right = max(left + 1, min(depth_width, right))
+        top = max(0, min(depth_height - 1, top))
+        bottom = max(top + 1, min(depth_height, bottom))
         width = right - left
         sample_y = int(round(top + (bottom - top) * 0.55))
         ratios = [0.15, 0.325, 0.50, 0.675, 0.85]
@@ -412,7 +428,11 @@ class HurdleAnalyzer(Node):
             offset_y_norm = offset_y_px / max(image_height / 2, 1.0)
 
         depth, left_depth, right_depth, sample_count = (
-            self._sample_depths(bbox)
+            self._sample_depths(
+                bbox,
+                image_width,
+                image_height,
+            )
         )
         depth_valid = depth is not None
         bearing: float | None = None
