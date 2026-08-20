@@ -33,6 +33,8 @@ def generate_launch_description() -> LaunchDescription:
             "align_depth.enable": "true",
             "enable_gyro": "true",
             "enable_accel": "true",
+            "rgb_camera.profile": "1280x720x30",
+            "depth_module.profile": "848x480x30",
         }.items(),
     )
 

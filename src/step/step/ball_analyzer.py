@@ -118,7 +118,7 @@ class BallAnalyzer(Node):
         )
         self.declare_parameter("output_topic", "/vision/ball_info")
         self.declare_parameter("ball_class_name", "ball")
-        self.declare_parameter("min_confidence", 0.35)
+        self.declare_parameter("min_confidence", 0.55)
         self.declare_parameter("depth_timeout_sec", 0.7)
         self.declare_parameter("depth_window_px", 9)
         self.declare_parameter("max_valid_depth_m", 4.0)
@@ -132,8 +132,10 @@ class BallAnalyzer(Node):
         self.declare_parameter("pickup_y_tolerance_ratio", 0.12)
         self.declare_parameter("horizontal_deadband_px", 20)
         self.declare_parameter("center_tolerance_px", 140)
-        self.declare_parameter("confirmation_window_size", 5)
-        self.declare_parameter("confirmation_required_hits", 3)
+        # At the 30 FPS competition setting this requires about one second of
+        # spatially consistent detection before ball_info becomes detected.
+        self.declare_parameter("confirmation_window_size", 40)
+        self.declare_parameter("confirmation_required_hits", 30)
         self.declare_parameter("confirmation_max_missed_frames", 2)
         self.declare_parameter("confirmation_max_center_shift_norm", 0.18)
         self.declare_parameter("confirmation_min_area_ratio", 0.40)

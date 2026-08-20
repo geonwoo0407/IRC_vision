@@ -12,7 +12,7 @@ from typing import Any
 class BallNavigationConfig:
     """Tunable limits for ball alignment and approach commands."""
 
-    min_confidence: float = 0.35
+    min_confidence: float = 0.55
     max_linear_speed_mps: float = 0.04
     min_linear_speed_mps: float = 0.012
     max_angular_speed_rad_s: float = 0.50

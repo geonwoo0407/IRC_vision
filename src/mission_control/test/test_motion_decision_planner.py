@@ -136,6 +136,56 @@ def test_confirmed_side_hurdle_still_has_priority_over_close_ball():
     assert decision.action == "GO"
 
 
+def test_distant_hurdle_approach_uses_line_direction():
+    planner = MotionDecisionPlanner()
+    line = line_info()
+    line["filtered_heading_error_deg"] = 14.0
+
+    for _ in range(3):
+        decision = planner.plan(
+            "AUTO",
+            observations(
+                line=line,
+                hurdle=hurdle_info(
+                    depth_m=1.2,
+                    distance_m=1.2,
+                    ground_gap_m=0.9,
+                    camera_bottom_gap_m=0.5,
+                    go_now=False,
+                ),
+            ),
+            0.1,
+        )
+
+    assert decision.source == "hurdle"
+    assert decision.action == "RIGHT"
+    assert decision.reason == "hurdle_approach_with_line_guidance"
+    assert decision.source_command["hurdle_action"] == "APPROACH_HURDLE"
+    assert decision.source_command["line_guidance"]["motion"] == "RIGHT"
+
+
+def test_hurdle_without_depth_falls_back_to_line_direction():
+    planner = MotionDecisionPlanner()
+
+    decision = planner.plan(
+        "AUTO",
+        observations(
+            line=line_info(),
+            hurdle=hurdle_info(depth_valid=False, depth_m=None),
+        ),
+        0.1,
+    )
+
+    assert decision.source == "hurdle"
+    assert decision.action == "STRAIGHT"
+    assert decision.valid is True
+    assert decision.reason == "hurdle_not_actionable_following_line"
+    assert decision.source_command["hurdle_action"] == "WAIT"
+    assert decision.source_command["hurdle_reason"] == (
+        "missing_valid_hurdle_depth"
+    )
+
+
 def test_ball_between_90cm_and_3m_keeps_line_without_recovery_memory():
     planner = MotionDecisionPlanner()
 
@@ -551,6 +601,31 @@ def test_line_phase_reuses_existing_line_planner():
     assert decision.source == "line"
     assert decision.action == "STRAIGHT"
     assert decision.valid is True
+
+
+@pytest.mark.parametrize(
+    "phase",
+    ["follow_line_to_ball_a", "FOLLOW_LINE_TO_GOAL_A"],
+)
+def test_mission_estimator_line_phases_resume_after_reacquisition(phase):
+    planner = MotionDecisionPlanner()
+
+    lost = planner.plan(phase, observations(line={"detected": False}), 0.1)
+    reacquired = planner.plan(phase, observations(line=line_info()), 0.1)
+
+    assert lost.source == "line"
+    assert lost.action == "STOP"
+    assert reacquired.source == "line"
+    assert reacquired.action == "STRAIGHT"
+    assert reacquired.valid is True
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected"),
+    [("pick_ball_a", "ball"), ("score_goal_a", "goal")],
+)
+def test_mission_estimator_object_phases_are_recognized(phase, expected):
+    assert MotionDecisionPlanner.source_for_phase(phase) == expected
 
 
 def test_unknown_phase_fails_safe():

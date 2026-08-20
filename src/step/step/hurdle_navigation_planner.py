@@ -12,7 +12,7 @@ from typing import Any
 class HurdleNavigationConfig:
     """Provisional hurdle alignment and jump thresholds."""
 
-    min_confidence: float = 0.35
+    min_confidence: float = 0.60
     go_target_ground_gap_m: float = 0.10
     go_ground_gap_tolerance_m: float = 0.10
     go_max_camera_bottom_gap_m: float = 0.05

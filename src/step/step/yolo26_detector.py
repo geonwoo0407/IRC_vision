@@ -1861,10 +1861,14 @@ class Yolo26Detector(Node):
 
         height, width = image.shape[:2]
         info = self._fresh_hurdle_info()
+        decision = self._fresh_motion_command()
         detected = bool(info and info.get("detected", False))
+        # Keep the route geometry visible while hurdle metrics own the panel;
+        # the approach controller may still be steering from this line.
+        self._draw_line_path_geometry(image, self._fresh_line_info())
 
         panel_width = min(410, max(260, width - 24))
-        panel_height = 310
+        panel_height = 334
         panel_x = max(12, width - panel_width - 12)
         panel_y = 44
         panel_bottom = min(height - 8, panel_y + panel_height)
@@ -1895,9 +1899,19 @@ class Yolo26Detector(Node):
             rows = ["HURDLE METRICS", f"State       : {state}"]
         else:
             state = str(info.get("state", "UNKNOWN"))
+            guidance = "N/A"
+            if decision is not None:
+                source_command = decision.get("source_command", {})
+                if isinstance(source_command, dict):
+                    line_guidance = source_command.get("line_guidance", {})
+                    if isinstance(line_guidance, dict):
+                        guidance = str(
+                            line_guidance.get("motion", "N/A")
+                        ).upper()
             rows = [
                 "HURDLE METRICS",
                 f"State       : {state}",
+                f"Line guide  : {guidance}",
                 "Depth Z     : "
                 + self._metric_text(self._number(info, "depth_m"), "m"),
                 "Ground gap  : "

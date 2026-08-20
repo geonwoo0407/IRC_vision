@@ -42,27 +42,73 @@ def test_straight_command_contains_speed_and_distance():
 def test_heading_sign_selects_turn_direction(heading, expected):
     planner = LineNavigationPlanner()
 
+    for _ in range(3):
+        command = planner.plan(
+            line_info(filtered_heading_error_deg=heading),
+            0.1,
+        )
+
+    assert command.motion == expected
+
+
+@pytest.mark.parametrize("heading", [-11.9, 0.0, 11.9])
+def test_wider_straight_deadband(heading):
+    planner = LineNavigationPlanner()
+
     command = planner.plan(
         line_info(filtered_heading_error_deg=heading),
         0.1,
     )
 
-    assert command.motion == expected
+    assert command.motion == "STRAIGHT"
 
 
 def test_offset_and_preview_are_used_for_steering():
-    planner = LineNavigationPlanner()
+    planner = LineNavigationPlanner(
+        NavigationConfig(direction_confirmation_frames=1)
+    )
 
     command = planner.plan(
         line_info(
             filtered_lateral_offset_norm=0.1,
-            turn_angle_deg=40.0,
+            turn_angle_deg=80.0,
         ),
         0.1,
     )
 
     assert command.motion == "RIGHT"
-    assert command.steering_error_deg > 7.0
+    assert command.steering_error_deg > 12.0
+
+
+def test_conflicting_heading_and_preview_holds_slow_straight():
+    planner = LineNavigationPlanner()
+
+    command = planner.plan(
+        line_info(
+            filtered_heading_error_deg=35.5,
+            filtered_lateral_offset_norm=0.049,
+            turn_angle_deg=-49.4,
+        ),
+        0.1,
+    )
+
+    assert command.motion == "STRAIGHT"
+    assert command.reason == "conflicting_heading_and_preview"
+    assert command.steering_error_deg == 0.0
+    assert command.linear_speed_mps == planner.config.min_linear_speed_mps
+
+
+def test_turn_requires_three_consecutive_frames():
+    planner = LineNavigationPlanner()
+    sample = line_info(filtered_heading_error_deg=20.0)
+
+    commands = [planner.plan(sample, 0.1) for _ in range(3)]
+
+    assert [command.motion for command in commands] == [
+        "STRAIGHT",
+        "STRAIGHT",
+        "RIGHT",
+    ]
 
 
 @pytest.mark.parametrize(

@@ -24,8 +24,10 @@ class NavigationConfig:
     preview_min_turn_deg: float = 8.0
     preview_min_consistency: float = 0.55
     steering_response_sec: float = 0.70
-    turn_enter_deg: float = 7.0
-    turn_exit_deg: float = 4.0
+    turn_enter_deg: float = 12.0
+    turn_exit_deg: float = 7.0
+    direction_confirmation_frames: int = 3
+    ambiguity_min_angle_deg: float = 25.0
     recovery_enter_offset_norm: float = 0.28
     recovery_exit_offset_norm: float = 0.16
     command_duration_sec: float = 0.40
@@ -115,11 +117,15 @@ class LineNavigationPlanner:
         self.config = config or NavigationConfig()
         self.previous_motion = "STOP"
         self.previous_angular_speed_rad_s = 0.0
+        self.turn_candidate: str | None = None
+        self.turn_candidate_hits = 0
 
     def stop(self, reason: str) -> NavigationCommand:
         """Create an immediate stop and reset steering state."""
         self.previous_motion = "STOP"
         self.previous_angular_speed_rad_s = 0.0
+        self.turn_candidate = None
+        self.turn_candidate_hits = 0
         return NavigationCommand(
             valid=False,
             motion="STOP",
@@ -193,6 +199,12 @@ class LineNavigationPlanner:
             and turn_consistency >= self.config.preview_min_consistency
         )
         preview_component = preview_turn if preview_is_reliable else 0.0
+        direction_is_ambiguous = bool(
+            preview_is_reliable
+            and abs(heading) >= self.config.ambiguity_min_angle_deg
+            and abs(preview_turn) >= self.config.ambiguity_min_angle_deg
+            and heading * preview_turn < 0.0
+        )
         heading_component = self.config.heading_gain * heading
         offset_component = self.config.offset_gain_deg * offset
         preview_component = self.config.preview_gain * preview_component
@@ -201,6 +213,8 @@ class LineNavigationPlanner:
             + offset_component
             + preview_component
         )
+        if direction_is_ambiguous:
+            steering_error = 0.0
 
         max_steering_deg = math.degrees(
             self.config.max_angular_speed_rad_s
@@ -212,7 +226,16 @@ class LineNavigationPlanner:
             max_steering_deg,
         )
 
-        desired_angular_speed = math.radians(steering_error) / max(
+        requested_motion = self._classify_motion(steering_error)
+        motion = self._confirm_motion(requested_motion)
+        turn_confirmation_pending = bool(
+            motion == "STRAIGHT" and requested_motion in {"LEFT", "RIGHT"}
+        )
+        control_steering_error = (
+            0.0 if turn_confirmation_pending else steering_error
+        )
+
+        desired_angular_speed = math.radians(control_steering_error) / max(
             self.config.steering_response_sec,
             1e-3,
         )
@@ -232,8 +255,14 @@ class LineNavigationPlanner:
         angular_speed = self.previous_angular_speed_rad_s + angular_delta
         angular_accel = angular_delta / dt_sec
 
-        motion = self._classify_motion(steering_error)
         speed = self._calculate_linear_speed(steering_error, quality)
+        reason = "line_tracking"
+        if direction_is_ambiguous:
+            speed = self.config.min_linear_speed_mps
+            reason = "conflicting_heading_and_preview"
+        elif turn_confirmation_pending:
+            speed = self.config.min_linear_speed_mps
+            reason = "turn_confirmation_pending"
         duration = self.config.command_duration_sec
 
         self.previous_motion = motion
@@ -242,7 +271,7 @@ class LineNavigationPlanner:
         return NavigationCommand(
             valid=True,
             motion=motion,
-            reason="line_tracking",
+            reason=reason,
             linear_speed_mps=speed,
             lateral_speed_mps=0.0,
             angular_speed_rad_s=angular_speed,
@@ -324,6 +353,32 @@ class LineNavigationPlanner:
             return "RIGHT"
         if steering_error_deg < -threshold:
             return "LEFT"
+        return "STRAIGHT"
+
+    def _confirm_motion(self, requested_motion: str) -> str:
+        """Require repeated LEFT/RIGHT observations before changing direction."""
+        if requested_motion not in {"LEFT", "RIGHT"}:
+            self.turn_candidate = None
+            self.turn_candidate_hits = 0
+            return "STRAIGHT"
+
+        if requested_motion == self.previous_motion:
+            self.turn_candidate = None
+            self.turn_candidate_hits = 0
+            return requested_motion
+
+        if requested_motion == self.turn_candidate:
+            self.turn_candidate_hits += 1
+        else:
+            self.turn_candidate = requested_motion
+            self.turn_candidate_hits = 1
+
+        if self.turn_candidate_hits >= max(
+            1, self.config.direction_confirmation_frames
+        ):
+            self.turn_candidate = None
+            self.turn_candidate_hits = 0
+            return requested_motion
         return "STRAIGHT"
 
     def _calculate_linear_speed(

@@ -103,13 +103,26 @@ class MotionDecisionPlanner:
         normalized = phase.strip().upper()
         if normalized == "AUTO":
             return None
+        # Accept both the short controller phases (LINE_TRACK, BALL_SEARCH,
+        # ...) and the semantic names published by mission_state_estimator
+        # (follow_line_to_ball_a, pick_ball_a, score_goal_a).  Previously the
+        # latter were classified as unknown, so the decision stayed at WAIT
+        # even after the line had been reacquired.
         if normalized.startswith("BALL") or normalized.startswith("PICK"):
             return "ball"
-        if normalized.startswith("GOAL") or normalized.startswith("SHOOT"):
+        if (
+            normalized.startswith("GOAL")
+            or normalized.startswith("SHOOT")
+            or normalized.startswith("SCORE_GOAL")
+        ):
             return "goal"
         if normalized.startswith("HURDLE") or normalized.startswith("JUMP"):
             return "hurdle"
-        if normalized.startswith("LINE") or normalized == "FINISH":
+        if (
+            normalized.startswith("LINE")
+            or normalized.startswith("FOLLOW_LINE")
+            or normalized == "FINISH"
+        ):
             return "line"
         return "none"
 
@@ -155,6 +168,12 @@ class MotionDecisionPlanner:
         self.previous_source = source
         info = observations.get(source)
         command = self._plan_source(source, info, dt_sec)
+        if source == "hurdle":
+            command = self._apply_hurdle_line_guidance(
+                command,
+                observations.get("line"),
+                dt_sec,
+            )
         action_key = "motion" if source in {"line", "ball"} else "action"
         action = str(command.get(action_key, "WAIT"))
         terminal = (source, action) in self.TERMINAL_ACTIONS
@@ -171,6 +190,48 @@ class MotionDecisionPlanner:
             requires_ack=terminal,
             source_command=command,
         )
+
+    def _apply_hurdle_line_guidance(
+        self,
+        hurdle_command: dict[str, Any],
+        line_info: dict[str, Any] | None,
+        dt_sec: float,
+    ) -> dict[str, Any]:
+        """Follow the route line while approaching a still-distant hurdle."""
+        hurdle_action = str(hurdle_command.get("action", "WAIT"))
+        use_line = hurdle_action == "APPROACH_HURDLE" or (
+            not bool(hurdle_command.get("valid", False))
+            and hurdle_action in {"WAIT", "WAIT_GO_CONFIRMATION"}
+        )
+        if not use_line:
+            return hurdle_command
+        if line_info is None or not bool(line_info.get("detected", False)):
+            return hurdle_command
+
+        line_command = self.line_planner.plan(line_info, dt_sec).to_dict()
+        if not bool(line_command.get("valid", False)):
+            return hurdle_command
+
+        combined = dict(hurdle_command)
+        reason = (
+            "hurdle_approach_with_line_guidance"
+            if hurdle_action == "APPROACH_HURDLE"
+            else "hurdle_not_actionable_following_line"
+        )
+        combined.update(
+            {
+                "action": line_command["motion"],
+                "valid": True,
+                "reason": reason,
+                "linear_speed_mps": line_command["linear_speed_mps"],
+                "lateral_speed_mps": line_command["lateral_speed_mps"],
+                "angular_speed_rad_s": line_command["angular_speed_rad_s"],
+                "line_guidance": line_command,
+                "hurdle_action": hurdle_action,
+                "hurdle_reason": hurdle_command.get("reason"),
+            }
+        )
+        return combined
 
     def _select_source(
         self,

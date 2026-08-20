@@ -203,22 +203,22 @@ class YoloLineAnalyzer(Node):
 
         self.declare_parameter(
             "roi_x_min_ratio",
-            0.05,
+            0.25,
         )
 
         self.declare_parameter(
             "roi_x_max_ratio",
-            0.95,
+            0.75,
         )
 
         self.declare_parameter(
             "roi_y_min_ratio",
-            0.05,
+            0.0,
         )
 
         self.declare_parameter(
             "roi_y_max_ratio",
-            0.97,
+            1.0,
         )
 
         # ====================================================
@@ -283,7 +283,7 @@ class YoloLineAnalyzer(Node):
         # extremely exaggerated.
         self.declare_parameter(
             "min_segment_dy_px",
-            35.0,
+            20.0,
         )
 
         # ====================================================
@@ -294,7 +294,7 @@ class YoloLineAnalyzer(Node):
         # the immediate heading.
         self.declare_parameter(
             "heading_segment_count",
-            2,
+            3,
         )
 
         # Weight decay:
@@ -304,7 +304,7 @@ class YoloLineAnalyzer(Node):
         # segment 3 -> 0.1225
         self.declare_parameter(
             "heading_weight_decay",
-            0.35,
+            0.65,
         )
 
         # Heading standard deviation regarded as poor stability.

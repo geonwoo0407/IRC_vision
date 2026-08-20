@@ -12,7 +12,7 @@ from typing import Any
 class GoalNavigationConfig:
     """Provisional goal alignment and scoring thresholds."""
 
-    min_confidence: float = 0.35
+    min_confidence: float = 0.55
     control_start_depth_m: float = 0.50
     score_target_depth_m: float = 0.25
     score_depth_tolerance_m: float = 0.05
