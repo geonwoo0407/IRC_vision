@@ -667,3 +667,18 @@ def test_lock_phase_waits_for_cpp_motion_status():
     assert decision.source == "none"
     assert decision.action == "WAIT"
     assert decision.reason == "mission_locked_waiting_for_motion_status"
+
+
+def test_line_lock_keeps_publishing_continuous_line_guidance():
+    planner = MotionDecisionPlanner()
+
+    decision = planner.plan(
+        "LINE_LOCK",
+        observations(line=line_info()),
+        0.1,
+    )
+
+    assert decision.source == "line"
+    assert decision.action == "STRAIGHT"
+    assert decision.valid is True
+    assert decision.requires_ack is False

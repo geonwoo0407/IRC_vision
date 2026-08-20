@@ -136,7 +136,14 @@ class MotionDecisionPlanner:
         normalized_phase = phase.strip().upper() or "AUTO"
         self._update_ball_tracking(observations.get("ball"), dt_sec)
         self._update_goal_tracking(observations.get("goal"), dt_sec)
-        if normalized_phase.endswith("_LOCK"):
+        # Continuous line guidance does not require an SDK completion ACK.
+        # Some external FSMs still publish LINE_LOCK after receiving a walking
+        # command; treating that like a terminal action leaves the robot stuck
+        # at WAIT forever.  Keep locks only for discrete object motions.
+        if (
+            normalized_phase.endswith("_LOCK")
+            and self.source_for_phase(normalized_phase) != "line"
+        ):
             self._reset_previous_source()
             return MotionDecision(
                 phase=normalized_phase,
