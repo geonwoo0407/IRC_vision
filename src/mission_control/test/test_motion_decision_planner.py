@@ -138,7 +138,24 @@ def test_confirmed_side_hurdle_still_has_priority_over_close_ball():
     assert decision.action == "GO"
 
 
-def test_distant_hurdle_approach_uses_line_direction():
+def test_hurdle_outside_one_meter_does_not_override_close_ball():
+    planner = MotionDecisionPlanner()
+
+    decision = planner.plan(
+        "AUTO",
+        observations(
+            line=line_info(),
+            ball=ball_info(depth_m=0.85, distance_m=0.85),
+            hurdle=hurdle_info(depth_m=1.01, distance_m=1.01),
+        ),
+        0.1,
+    )
+
+    assert decision.source == "ball"
+    assert decision.action == "FINE_FORWARD_STEP"
+
+
+def test_hurdle_outside_one_meter_is_ignored_for_line_tracking():
     planner = MotionDecisionPlanner()
     line = line_info()
     line["filtered_heading_error_deg"] = 14.0
@@ -159,13 +176,9 @@ def test_distant_hurdle_approach_uses_line_direction():
             0.1,
         )
 
-    assert decision.source == "hurdle"
+    assert decision.source == "line"
     assert decision.action == "STRAIGHT"
-    assert decision.reason == "hurdle_approach_with_line_guidance"
-    assert decision.source_command["hurdle_action"] == "APPROACH_HURDLE"
-    assert decision.source_command["line_guidance"]["motion"] == (
-        "STRAIGHT"
-    )
+    assert decision.reason == "straight_line_turn_suppressed"
 
 
 def test_recovery_heading_deadband_is_configurable():
@@ -196,24 +209,20 @@ def test_hurdle_without_depth_falls_back_to_line_direction():
         0.1,
     )
 
-    assert decision.source == "hurdle"
+    assert decision.source == "line"
     assert decision.action == "STRAIGHT"
     assert decision.valid is True
-    assert decision.reason == "hurdle_not_actionable_following_line"
-    assert decision.source_command["hurdle_action"] == "WAIT"
-    assert decision.source_command["hurdle_reason"] == (
-        "missing_valid_hurdle_depth"
-    )
+    assert decision.reason == "line_tracking"
 
 
-def test_ball_between_90cm_and_3m_keeps_line_without_recovery_memory():
+def test_ball_between_control_and_tracking_range_keeps_line():
     planner = MotionDecisionPlanner()
 
     decision = planner.plan(
         "AUTO",
         observations(
             line=line_info(),
-            ball=ball_info(depth_m=2.5, distance_m=2.5),
+            ball=ball_info(depth_m=1.2, distance_m=1.2),
         ),
         0.1,
     )
@@ -230,7 +239,7 @@ def test_ball_search_keeps_line_until_ball_is_inside_90cm():
         "BALL_SEARCH",
         observations(
             line=line_info(),
-            ball=ball_info(depth_m=2.0, distance_m=2.0),
+            ball=ball_info(depth_m=1.2, distance_m=1.2),
         ),
         0.1,
     )
@@ -239,14 +248,41 @@ def test_ball_search_keeps_line_until_ball_is_inside_90cm():
     assert decision.action == "STRAIGHT"
 
 
-def test_ball_beyond_3m_does_not_start_tracking_memory():
+def test_ball_beyond_1_5m_does_not_start_tracking_memory():
     planner = MotionDecisionPlanner()
 
     decision = planner.plan(
         "AUTO",
         observations(
             line=line_info(),
-            ball=ball_info(depth_m=3.01, distance_m=3.01),
+            ball=ball_info(depth_m=1.501, distance_m=1.501),
+        ),
+        0.1,
+    )
+
+    assert decision.source == "line"
+    assert planner.ball_tracking_active is False
+
+
+def test_ball_leaving_tracking_range_clears_recovery_memory():
+    planner = recovery_planner()
+    planner.plan(
+        "AUTO",
+        observations(
+            line=line_info(),
+            ball=ball_info(depth_m=1.2, distance_m=1.2),
+        ),
+        0.1,
+    )
+
+    decision = planner.plan(
+        "AUTO",
+        observations(
+            line=line_info(),
+            ball={
+                "detected": False,
+                "note": "ball_outside_tracking_range",
+            },
         ),
         0.1,
     )
@@ -301,8 +337,8 @@ def test_90cm_takeover_uses_depth_not_hypotenuse_distance():
 def test_lost_tracked_ball_stops_then_turns_toward_last_seen_side():
     planner = recovery_planner()
     visible_right = ball_info(
-        depth_m=2.5,
-        distance_m=2.5,
+        depth_m=1.2,
+        distance_m=1.2,
         bearing_deg=12.0,
         offset_x_norm=0.25,
     )
@@ -348,8 +384,8 @@ def test_blocking_hurdle_interrupts_ball_recovery_turn():
         observations(
             line=line_info(),
             ball=ball_info(
-                depth_m=2.5,
-                distance_m=2.5,
+                depth_m=1.2,
+                distance_m=1.2,
                 bearing_deg=12.0,
             ),
         ),
@@ -381,7 +417,7 @@ def test_reacquired_ball_inside_90cm_resumes_ball_control():
         "AUTO",
         observations(
             line=line_info(),
-            ball=ball_info(depth_m=2.5, distance_m=2.5),
+            ball=ball_info(depth_m=1.2, distance_m=1.2),
         ),
         0.1,
     )
@@ -412,8 +448,8 @@ def test_reacquired_far_ball_is_centered_before_line_resumes():
         observations(
             line=line_info(),
             ball=ball_info(
-                depth_m=2.5,
-                distance_m=2.5,
+                depth_m=1.2,
+                distance_m=1.2,
                 bearing_deg=-15.0,
             ),
         ),
@@ -430,8 +466,8 @@ def test_reacquired_far_ball_is_centered_before_line_resumes():
         observations(
             line=line_info(),
             ball=ball_info(
-                depth_m=2.4,
-                distance_m=2.4,
+                depth_m=1.2,
+                distance_m=1.2,
                 bearing_deg=-10.0,
             ),
         ),
@@ -442,8 +478,8 @@ def test_reacquired_far_ball_is_centered_before_line_resumes():
         observations(
             line=line_info(),
             ball=ball_info(
-                depth_m=2.4,
-                distance_m=2.4,
+                depth_m=1.2,
+                distance_m=1.2,
                 bearing_deg=2.0,
             ),
         ),
@@ -457,20 +493,47 @@ def test_reacquired_far_ball_is_centered_before_line_resumes():
     assert planner.ball_recovery_centering is False
 
 
-def test_goal_between_50cm_and_3m_is_remembered_while_line_continues():
+def test_goal_between_control_and_tracking_range_is_remembered():
     planner = MotionDecisionPlanner()
 
     decision = planner.plan(
         "AUTO",
         observations(
             line=line_info(),
-            goal=goal_info(depth_m=1.5, distance_m=1.5),
+            goal=goal_info(depth_m=0.8, distance_m=0.8),
         ),
         0.1,
     )
 
     assert decision.source == "line"
     assert planner.goal_tracking_active is True
+
+
+def test_goal_leaving_tracking_range_clears_recovery_memory():
+    planner = MotionDecisionPlanner()
+    planner.plan(
+        "AUTO",
+        observations(
+            line=line_info(),
+            goal=goal_info(depth_m=0.8, distance_m=0.8),
+        ),
+        0.1,
+    )
+
+    decision = planner.plan(
+        "AUTO",
+        observations(
+            line=line_info(),
+            goal={
+                "detected": False,
+                "note": "goal_outside_tracking_range",
+            },
+        ),
+        0.1,
+    )
+
+    assert decision.source == "line"
+    assert planner.goal_tracking_active is False
 
 
 def test_goal_inside_50cm_takes_priority_and_approaches():
@@ -511,8 +574,8 @@ def test_lost_goal_stops_then_turns_toward_last_seen_side():
         observations(
             line=line_info(),
             goal=goal_info(
-                depth_m=1.5,
-                distance_m=1.5,
+                depth_m=0.8,
+                distance_m=0.8,
                 bearing_deg=-12.0,
                 offset_x_norm=-0.25,
             ),
@@ -550,8 +613,8 @@ def test_reacquired_goal_is_centered_before_line_or_goal_control():
         observations(
             line=line_info(),
             goal=goal_info(
-                depth_m=1.5,
-                distance_m=1.5,
+                depth_m=0.8,
+                distance_m=0.8,
                 bearing_deg=15.0,
             ),
         ),

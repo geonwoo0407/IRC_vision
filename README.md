@@ -592,7 +592,7 @@ candidate_count
 초기 거리 기준은 다음처럼 잡았습니다.
 
 ```text
-detect_depth_m        3.0m 이하이면 추적 기억을 시작
+detect_depth_m        1.5m 이하이면 추적 대상으로 사용
 approach_depth_m      0.90m 이하이면 공 제어 전환 후보
 pickup_ready_depth_m  0.9m 이하 + 화면 중앙이면 집기 자세 준비
 pickup_now_depth_m    공 줍기 기준 depth 0.80m
@@ -693,8 +693,8 @@ ros2 topic echo /navigation/ball_command
 
 ```text
 공 미검출                       → line 주행
-공 검출, 거리 3.0m 초과         → line 주행, 추적 시작 안 함
-공 검출, Depth > 0.90m         → line 주행 유지
+공 검출, 거리 1.5m 초과         → 분석·화면·모드 선택에서 무시
+공 검출, 0.90m < Depth <= 1.5m → TRACK ONLY, line 주행 유지
 공 검출, Depth <= 0.90m        → ball planner로 전환
 공이 화면에서 사라짐             → 즉시 line 판단으로 복귀
 ```
@@ -752,7 +752,7 @@ score_now
 실제 골넣기 모션이 정해지기 전까지 임시 조건은 다음과 같습니다.
 
 ```text
-goal_tracking_range_m          3.0m 이내에서 backboard 위치 기억
+goal_tracking_range_m          1.0m 이내에서 backboard 위치 기억
 control_start_depth_m          0.50m 이내에서 골대 보행/정렬 우선
 score_target_depth_m          0.25m
 score_depth_tolerance_m       ±0.05m
@@ -767,8 +767,8 @@ score_center_tolerance_norm   ±0.10
 통합 판단의 골대 상태 흐름은 다음과 같습니다.
 
 ```text
-Depth Z > 3.0m               → 골대 기억 안 함, line 주행
-0.50m < Depth Z <= 3.0m     → backboard 좌우 위치 기억, line 주행 유지
+Depth Z > 1.0m               → 분석·화면·모드 선택에서 무시
+0.50m < Depth Z <= 1.0m     → backboard 좌우 위치 기억, line 주행 유지
 Depth Z <= 0.50m            → goal planner 우선
 중앙에서 벗어남              → ALIGN_LEFT / ALIGN_RIGHT
 중앙이고 0.30m보다 멂        → APPROACH_GOAL 보행모션 후보
@@ -839,6 +839,7 @@ go_now
 현재 임시 넘기 준비 조건은 다음과 같습니다.
 
 ```text
+detect_depth_m                  1.0m 이내에서만 허들 추적·모드 선택
 camera_height_m                  0.70m
 hurdle_reference_height_m        0.10m
 go_target_ground_gap_m           0.10m
@@ -892,15 +893,15 @@ HurdleAnalyzer
 
 | phase 형태 | 동작 |
 |---|---|
-| `AUTO` | 공은 0.90m, 골대는 0.50m 안에서만 우선; 공이 사라지면 line으로 즉시 복귀 |
-| `BALL_SEARCH` | 0.90m 밖에서는 line 주행, 0.90m 안에서 ball planner 전환; 기본 분실 회전 없음 |
-| `GOAL_SEARCH` | 0.50~3m backboard는 기억하면서 line 주행, 0.50m 안에서 goal planner 전환, 분실 시 마지막 방향 회전 |
-| `HURDLE_SEARCH` | 목표가 보이면 hurdle planner, 아직 안 보이면 line planner로 주행하며 탐색 |
+| `AUTO` | 추적 범위는 공 1.5m/골대 1.0m/허들 1.0m, 제어 전환은 각각 0.90m/0.50m/1.0m 안에서만 수행 |
+| `BALL_SEARCH` | 0.90~1.5m에서는 추적만 하며 line 주행, 0.90m 안에서 ball planner 전환 |
+| `GOAL_SEARCH` | 0.50~1.0m backboard는 기억하면서 line 주행, 0.50m 안에서 goal planner 전환 |
+| `HURDLE_SEARCH` | 1.0m 안의 확정된 허들만 hurdle planner로 전환, 그 밖에서는 line 주행 |
 | `BALL_APPROACH`, `GOAL_APPROACH`, `HURDLE_APPROACH` | 해당 객체 planner에 집중 |
 | `LINE_TRACK` | line planner만 사용 |
 | `PICK_LOCK`, `SHOOT_LOCK`, `HURDLE_LOCK` | C++ SDK 모션이 끝날 때까지 `WAIT`; 새 이동 판단 차단 |
 
-확정된 허들이 보이면 화면 중앙 여부와 관계없이 공·골대보다 hurdle
+1.0m 안에서 확정된 허들이 보이면 화면 중앙 여부와 관계없이 공·골대보다 hurdle
 planner를 먼저 선택합니다. 허들을 화면 중앙으로 옮기는 대신 좌우 depth
 차이로 계산한 `hurdle_angle_deg`가 허용 범위에 들도록 제자리 회전하고,
 그 다음 depth를 맞춥니다. SDK 모션이 이미 실행 중인 `*_LOCK` 상태는
@@ -923,7 +924,7 @@ request_latched             단발 이벤트 조건이 현재 유지 중인지 �
 sdk_motion_id               현재 null; C++ SDK 계약 후 설정
 input_age_sec               네 입력 토픽의 최신 데이터 나이
 ball_tracking               현재 기본 비활성; 향후 분실 복구용 상태
-goal_tracking               3m backboard 기억, 분실 시간, 마지막 좌우 방향
+goal_tracking               1.0m backboard 기억, 분실 시간, 마지막 좌우 방향
 ```
 
 현재 통합 노드는 친구가 설계한 전체 `motion_decision`의 입력/선택 뼈대입니다. 아래 항목은 SDK 인터페이스가 확정된 뒤 추가해야 합니다.

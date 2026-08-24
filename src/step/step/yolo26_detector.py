@@ -118,14 +118,18 @@ class Yolo26Detector(Node):
         self.declare_parameter("ball_info_topic", "/vision/ball_info")
         self.declare_parameter("ball_info_timeout_sec", 0.8)
         self.declare_parameter("show_ball_metrics", True)
+        self.declare_parameter("ball_tracking_range_m", 1.5)
         self.declare_parameter("ball_control_range_m", 0.9)
         self.declare_parameter("goal_info_topic", "/vision/goal_info")
         self.declare_parameter("goal_info_timeout_sec", 0.8)
         self.declare_parameter("show_goal_metrics", True)
+        self.declare_parameter("goal_tracking_range_m", 1.0)
         self.declare_parameter("goal_control_range_m", 0.5)
         self.declare_parameter("hurdle_info_topic", "/vision/hurdle_info")
         self.declare_parameter("hurdle_info_timeout_sec", 0.8)
         self.declare_parameter("show_hurdle_metrics", True)
+        self.declare_parameter("hurdle_tracking_range_m", 1.0)
+        self.declare_parameter("hurdle_control_range_m", 1.0)
         self.declare_parameter(
             "motion_command_topic",
             "/navigation/motion_command",
@@ -184,6 +188,9 @@ class Yolo26Detector(Node):
         self.show_ball_metrics = bool(
             self.get_parameter("show_ball_metrics").value
         )
+        self.ball_tracking_range_m = float(
+            self.get_parameter("ball_tracking_range_m").value
+        )
         self.ball_control_range_m = float(
             self.get_parameter("ball_control_range_m").value
         )
@@ -194,6 +201,9 @@ class Yolo26Detector(Node):
         self.show_goal_metrics = bool(
             self.get_parameter("show_goal_metrics").value
         )
+        self.goal_tracking_range_m = float(
+            self.get_parameter("goal_tracking_range_m").value
+        )
         self.goal_control_range_m = float(
             self.get_parameter("goal_control_range_m").value
         )
@@ -203,6 +213,12 @@ class Yolo26Detector(Node):
         )
         self.show_hurdle_metrics = bool(
             self.get_parameter("show_hurdle_metrics").value
+        )
+        self.hurdle_tracking_range_m = float(
+            self.get_parameter("hurdle_tracking_range_m").value
+        )
+        self.hurdle_control_range_m = float(
+            self.get_parameter("hurdle_control_range_m").value
         )
         self.motion_command_timeout_sec = max(
             0.1,
@@ -1131,6 +1147,51 @@ class Yolo26Detector(Node):
         hits = int(info.get("confirmation_hits", 0))
         required = int(info.get("confirmation_required_hits", 1))
         return f"CANDIDATE {hits}/{required}"
+
+    def _object_range_status(
+        self,
+        class_name: str,
+        ball_info: dict[str, Any] | None,
+        goal_info: dict[str, Any] | None,
+        hurdle_info: dict[str, Any] | None,
+    ) -> tuple[bool, bool, float | None]:
+        """Return display visibility, control readiness, and target depth."""
+        settings = {
+            "ball": (
+                ball_info,
+                self.ball_tracking_range_m,
+                self.ball_control_range_m,
+            ),
+            "goal": (
+                goal_info,
+                self.goal_tracking_range_m,
+                self.goal_control_range_m,
+            ),
+            "backboard": (
+                goal_info,
+                self.goal_tracking_range_m,
+                self.goal_control_range_m,
+            ),
+            "hurdle": (
+                hurdle_info,
+                self.hurdle_tracking_range_m,
+                self.hurdle_control_range_m,
+            ),
+        }
+        setting = settings.get(class_name)
+        if setting is None:
+            return True, True, None
+        info, tracking_range, control_range = setting
+        if (
+            info is None
+            or not bool(info.get("detected", False))
+            or not bool(info.get("depth_valid", False))
+        ):
+            return False, False, None
+        depth = self._number(info, "depth_m")
+        if depth is None or depth > tracking_range:
+            return False, False, depth
+        return True, depth <= control_range, depth
 
     @staticmethod
     def _metric_text(
@@ -2088,32 +2149,22 @@ class Yolo26Detector(Node):
                 metrics_mode == "line" or show_recovery_line
             ) and detection.class_name == "line":
                 continue
+            visible, control_ready, object_depth = self._object_range_status(
+                detection.class_name,
+                ball_info,
+                goal_info,
+                hurdle_info,
+            )
+            if not visible:
+                continue
             left, top, right, bottom = detection.bbox
             color = self._color_for_class(detection.class_id)
             label = f"{detection.class_name} {detection.confidence:.2f}"
-            if metrics_mode == "line" and detection.class_name == "ball":
-                ball_info = self._fresh_ball_info()
-                ball_depth = (
-                    self._number(ball_info, "depth_m")
-                    if ball_info is not None
-                    else None
+            if object_depth is not None and not control_ready:
+                label = (
+                    f"{detection.class_name} TRACK ONLY "
+                    f"{object_depth:.2f}m"
                 )
-                if (
-                    ball_depth is not None
-                    and ball_depth > self.ball_control_range_m
-                ):
-                    label = f"ball TRACK ONLY {ball_depth:.2f}m"
-            if metrics_mode == "line" and detection.class_name == "goal":
-                goal_depth = (
-                    self._number(goal_info, "depth_m")
-                    if goal_info is not None
-                    else None
-                )
-                if (
-                    goal_depth is not None
-                    and goal_depth > self.goal_control_range_m
-                ):
-                    label = f"goal TRACK ONLY {goal_depth:.2f}m"
             confirmation_info = {
                 "line": line_info,
                 "ball": ball_info,

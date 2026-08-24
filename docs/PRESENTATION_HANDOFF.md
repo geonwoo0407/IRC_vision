@@ -118,8 +118,8 @@ SEARCH → NO_DEPTH/FAR/TRACK/APPROACH → PICKUP_READY → PICKUP_NOW
 
 현재 기본값과 우선순위:
 
-- Depth Z 3.0m 안에서 처음 인식하면 마지막 bearing/화면 좌우 위치를 기억
-- Depth Z 0.90~3.0m에서는 공이 보여도 line 주행을 유지
+- Depth Z 1.5m 안에서 처음 인식하면 마지막 bearing/화면 좌우 위치를 기억
+- Depth Z 0.90~1.5m에서는 공이 보여도 line 주행을 유지
 - Depth Z 0.90m 안에서 ball planner로 전환
 - 좌우 오차가 크면 제자리 `TURN_LEFT/RIGHT`
 - 정렬되면 `APPROACH`, 1.0m 안에서 감속, 0.95m 안에서 `FINE_FORWARD_STEP`
@@ -135,8 +135,8 @@ SEARCH → NO_DEPTH/FAR/TRACK/APPROACH → PICKUP_READY → PICKUP_NOW
 
 현재 임시 득점 조건:
 
-- Depth Z 3.0m 안에서 backboard 위치 기억
-- Depth Z 0.50~3.0m에서는 line 주행 유지
+- Depth Z 1.0m 안에서 backboard 위치 기억
+- Depth Z 0.50~1.0m에서는 line 주행 유지
 - Depth Z 0.50m 안에서 goal planner로 전환
 - 목표 depth: 0.25m
 - 거리 허용오차: ±0.05m
@@ -168,7 +168,7 @@ Planner는 좌우 끝 depth 차이로 계산한 평행 오차가 ±8°를 벗어
 - `*_SEARCH`: 목표가 없으면 line을 따라가며 탐색
 - `*_APPROACH`: 해당 객체에 집중
 - `*_LOCK`: SDK 모션 완료를 기다리며 새 명령 차단
-- `AUTO`: 공은 0.90m, 골대는 0.50m 안에서만 line보다 우선하며 각각 3m 안에서는 위치만 기억하는 시험 모드
+- `AUTO`: 공 1.5m/골대 1.0m/허들 1.0m까지 추적하고, 공 0.90m/골대 0.50m/허들 1.0m 안에서만 해당 객체 제어를 우선하는 시험 모드
 
 `PICKUP_NOW`, `SHOT`, `GO`가 여러 프레임 유지돼도 `sdk_motion_requested=true`는 조건 진입 시 한 번만 발행합니다. `command_id`와 `event_id`로 연속 제어 명령과 단발 모션 요청을 구분합니다.
 

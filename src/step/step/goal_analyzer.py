@@ -18,6 +18,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 
+from .temporal_confirmation import depth_is_within_range
 from .temporal_confirmation import TemporalConfirmationFilter
 
 
@@ -112,6 +113,7 @@ class GoalAnalyzer(Node):
         self.declare_parameter("depth_timeout_sec", 0.7)
         self.declare_parameter("depth_window_px", 11)
         self.declare_parameter("max_valid_depth_m", 6.0)
+        self.declare_parameter("detect_depth_m", 1.0)
         self.declare_parameter("approach_depth_m", 0.5)
         self.declare_parameter("score_target_depth_m", 0.25)
         self.declare_parameter("score_depth_tolerance_m", 0.05)
@@ -152,6 +154,7 @@ class GoalAnalyzer(Node):
         self.max_valid_depth_m = self._float_parameter(
             "max_valid_depth_m"
         )
+        self.detect_depth_m = self._float_parameter("detect_depth_m")
         self.approach_depth_m = self._float_parameter("approach_depth_m")
         self.score_target_depth_m = self._float_parameter(
             "score_target_depth_m"
@@ -664,6 +667,7 @@ class GoalAnalyzer(Node):
             == self.backboard_class_name
         ]
         candidates: list[GoalCandidate] = []
+        outside_tracking_range = False
         for detection in detections:
             if not isinstance(detection, dict):
                 continue
@@ -680,8 +684,16 @@ class GoalAnalyzer(Node):
                 image_height,
                 aim_detection,
             )
-            if candidate is not None:
+            if candidate is None:
+                continue
+            if depth_is_within_range(
+                candidate.depth_valid,
+                candidate.depth_m,
+                self.detect_depth_m,
+            ):
                 candidates.append(candidate)
+            elif candidate.depth_valid and candidate.depth_m is not None:
+                outside_tracking_range = True
         candidates.sort(key=lambda item: item.score, reverse=True)
         if not candidates:
             confirmation = self.confirmation_filter.update(False)
@@ -691,7 +703,12 @@ class GoalAnalyzer(Node):
                 "score_confirmation"
             )
             if self.publish_empty_when_missing:
-                self._publish(self._empty_info())
+                note = (
+                    "goal_outside_tracking_range"
+                    if outside_tracking_range
+                    else "no_goal_detection"
+                )
+                self._publish(self._empty_info(note))
             return
 
         target = candidates[0]

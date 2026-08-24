@@ -43,6 +43,16 @@ def test_hurdle_waits_until_analyzer_confirms_go_condition():
     assert command.sdk_motion_requested is False
 
 
+def test_hurdle_outside_one_meter_is_ignored():
+    planner = HurdleNavigationPlanner()
+
+    command = planner.plan(hurdle_info(depth_m=1.001))
+
+    assert command.valid is False
+    assert command.action == "WAIT"
+    assert command.reason == "hurdle_outside_control_range"
+
+
 @pytest.mark.parametrize("ground_gap", [0.0, 0.2])
 def test_go_ground_gap_tolerance_includes_boundary(ground_gap):
     planner = HurdleNavigationPlanner()

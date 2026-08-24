@@ -1,6 +1,7 @@
 """Unit tests for reusable vision confirmation filtering."""
 
 from step.temporal_confirmation import TemporalConfirmationFilter
+from step.temporal_confirmation import depth_is_within_range
 
 
 FRAME = {"image_width": 1280, "image_height": 720}
@@ -25,6 +26,13 @@ def test_three_of_five_consistent_hits_confirm_target():
 
     assert result.confirmed is True
     assert result.hit_count == 3
+
+
+def test_depth_range_gate_is_inclusive_and_rejects_unknown_depth():
+    assert depth_is_within_range(True, 1.5, 1.5) is True
+    assert depth_is_within_range(True, 1.501, 1.5) is False
+    assert depth_is_within_range(False, 0.5, 1.5) is False
+    assert depth_is_within_range(True, None, 1.5) is False
 
 
 def test_spatial_jump_starts_a_new_candidate_history():

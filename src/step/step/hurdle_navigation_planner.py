@@ -13,6 +13,7 @@ class HurdleNavigationConfig:
     """Provisional hurdle alignment and jump thresholds."""
 
     min_confidence: float = 0.60
+    control_start_depth_m: float = 1.0
     go_target_ground_gap_m: float = 0.10
     go_ground_gap_tolerance_m: float = 0.10
     go_max_camera_bottom_gap_m: float = 0.05
@@ -122,6 +123,8 @@ class HurdleNavigationPlanner:
         depth = _number(hurdle_info, "depth_m")
         if not bool(hurdle_info.get("depth_valid", False)) or depth is None:
             return self.wait("missing_valid_hurdle_depth")
+        if depth > self.config.control_start_depth_m:
+            return self.wait("hurdle_outside_control_range")
         distance = _number(hurdle_info, "distance_m")
         ground_gap = _number(hurdle_info, "ground_gap_m")
         camera_bottom_gap = _number(

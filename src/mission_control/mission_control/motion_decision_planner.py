@@ -47,7 +47,7 @@ class MotionDecisionConfig:
 
     enable_ball_lost_recovery: bool = False
     recovery_heading_turn_deg: float = 15.0
-    ball_tracking_range_m: float = 3.0
+    ball_tracking_range_m: float = 1.5
     ball_control_range_m: float = 0.9
     ball_lost_stop_sec: float = 0.35
     ball_recovery_timeout_sec: float = 8.0
@@ -56,8 +56,9 @@ class MotionDecisionConfig:
     ball_recovery_direction_deadband_deg: float = 1.0
     ball_reacquire_center_deg: float = 5.0
     ball_reacquire_center_norm: float = 0.08
-    goal_tracking_range_m: float = 3.0
+    goal_tracking_range_m: float = 1.0
     goal_control_range_m: float = 0.5
+    hurdle_control_range_m: float = 1.0
     goal_lost_stop_sec: float = 0.35
     goal_recovery_timeout_sec: float = 8.0
     goal_recovery_turn_rad_s: float = 0.22
@@ -69,7 +70,7 @@ class MotionDecisionConfig:
 class MotionDecisionPlanner:
     """Run one existing planner according to the active mission phase."""
 
-    AUTO_PRIORITY = ("hurdle", "line")
+    AUTO_PRIORITY = ("line",)
     TERMINAL_ACTIONS = {
         ("ball", "PICKUP_NOW"),
         ("goal", "SHOT"),
@@ -329,9 +330,8 @@ class MotionDecisionPlanner:
                 return source
         return "none"
 
-    @staticmethod
-    def _confirmed_hurdle(info: dict[str, Any] | None) -> bool:
-        """Return true for any confirmed hurdle, regardless of image center."""
+    def _confirmed_hurdle(self, info: dict[str, Any] | None) -> bool:
+        """Return true for a confirmed hurdle inside its control range."""
         if info is None or not bool(info.get("detected", False)):
             return False
         if (
@@ -339,8 +339,12 @@ class MotionDecisionPlanner:
             and not bool(info.get("confirmation_confirmed", False))
         ):
             return False
-
-        return True
+        depth = self._number(info, "depth_m")
+        return bool(
+            info.get("depth_valid", False)
+            and depth is not None
+            and depth <= self.config.hurdle_control_range_m
+        )
 
     def _plan_source(
         self,
@@ -429,8 +433,14 @@ class MotionDecisionPlanner:
         info: dict[str, Any] | None,
         dt_sec: float,
     ) -> None:
-        """Remember a ball seen within 3 m and time any later loss."""
+        """Remember an in-range ball and time any later image loss."""
         if not self.config.enable_ball_lost_recovery:
+            self._clear_ball_tracking()
+            return
+        if (
+            info is not None
+            and info.get("note") == "ball_outside_tracking_range"
+        ):
             self._clear_ball_tracking()
             return
         detected = self._is_detected_ball(info)
@@ -625,7 +635,13 @@ class MotionDecisionPlanner:
         info: dict[str, Any] | None,
         dt_sec: float,
     ) -> None:
-        """Remember a backboard seen within 3 m and time any later loss."""
+        """Remember an in-range backboard and time any later image loss."""
+        if (
+            info is not None
+            and info.get("note") == "goal_outside_tracking_range"
+        ):
+            self._clear_goal_tracking()
+            return
         detected = self._is_detected_goal(info)
         confidence = self._number(info, "confidence")
         reliable = detected and confidence is not None and confidence >= 0.35
