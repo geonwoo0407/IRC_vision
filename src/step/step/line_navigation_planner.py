@@ -241,6 +241,7 @@ class LineNavigationPlanner:
             return self.stop("low_line_quality")
 
         preview_turn = _number(line_info, "turn_angle_deg")
+        path_turn_delta = _number(line_info, "path_turn_delta_deg")
         turn_consistency = _number(line_info, "turn_consistency")
         preview_is_reliable = (
             preview_turn is not None
@@ -248,15 +249,29 @@ class LineNavigationPlanner:
             and turn_consistency is not None
             and turn_consistency >= self.config.preview_min_consistency
         )
+        path_turn_is_reliable = (
+            path_turn_delta is not None
+            and abs(path_turn_delta) >= self.config.preview_min_turn_deg
+            and turn_consistency is not None
+            and turn_consistency >= self.config.preview_min_consistency
+        )
+        curve_turn = (
+            preview_turn
+            if preview_is_reliable
+            else path_turn_delta
+            if path_turn_is_reliable
+            else None
+        )
+        curve_is_reliable = curve_turn is not None
         direction_is_ambiguous = bool(
-            preview_is_reliable
+            curve_is_reliable
             and abs(heading) >= self.config.ambiguity_min_angle_deg
-            and abs(preview_turn) >= self.config.ambiguity_min_angle_deg
-            and heading * preview_turn < 0.0
+            and abs(curve_turn) >= self.config.ambiguity_min_angle_deg
+            and heading * curve_turn < 0.0
         )
         curve_matches_heading = bool(
-            preview_is_reliable
-            and heading * preview_turn > 0.0
+            curve_is_reliable
+            and heading * curve_turn > 0.0
         )
         recovery_motion = (
             None
@@ -275,7 +290,7 @@ class LineNavigationPlanner:
                 quality,
             )
 
-        preview_component = preview_turn if preview_is_reliable else 0.0
+        preview_component = curve_turn if curve_is_reliable else 0.0
         heading_component = self.config.heading_gain * heading
         offset_component = self.config.offset_gain_deg * offset
         preview_component = self.config.preview_gain * preview_component
@@ -298,6 +313,19 @@ class LineNavigationPlanner:
         )
 
         requested_motion = self._classify_motion(steering_error)
+        curve_matches_requested_motion = bool(
+            curve_is_reliable
+            and (
+                (requested_motion == "RIGHT" and curve_turn > 0.0)
+                or (requested_motion == "LEFT" and curve_turn < 0.0)
+            )
+        )
+        straight_line_turn_suppressed = bool(
+            requested_motion in {"LEFT", "RIGHT"}
+            and not curve_matches_requested_motion
+        )
+        if straight_line_turn_suppressed:
+            requested_motion = "STRAIGHT"
         turn_approach_pending = bool(
             (requested_motion == "RIGHT"
              and heading <= self.config.turn_min_heading_deg)
@@ -311,7 +339,9 @@ class LineNavigationPlanner:
             motion == "STRAIGHT" and requested_motion in {"LEFT", "RIGHT"}
         )
         control_steering_error = (
-            0.0 if turn_confirmation_pending else steering_error
+            0.0
+            if turn_confirmation_pending or straight_line_turn_suppressed
+            else steering_error
         )
 
         desired_angular_speed = math.radians(control_steering_error) / max(
@@ -339,6 +369,8 @@ class LineNavigationPlanner:
         if direction_is_ambiguous:
             speed = self.config.min_linear_speed_mps
             reason = "conflicting_heading_and_preview"
+        elif straight_line_turn_suppressed:
+            reason = "straight_line_turn_suppressed"
         elif turn_approach_pending:
             reason = "turn_approach_pending"
         elif turn_confirmation_pending:
@@ -367,7 +399,7 @@ class LineNavigationPlanner:
             preview_component_deg=preview_component,
             heading_error_deg=heading,
             lateral_offset_norm=offset,
-            preview_turn_deg=preview_turn,
+            preview_turn_deg=curve_turn,
             line_quality=quality,
         )
 

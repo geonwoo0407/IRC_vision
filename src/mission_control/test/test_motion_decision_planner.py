@@ -160,11 +160,11 @@ def test_distant_hurdle_approach_uses_line_direction():
         )
 
     assert decision.source == "hurdle"
-    assert decision.action == "RIGHT"
+    assert decision.action == "STRAIGHT"
     assert decision.reason == "hurdle_approach_with_line_guidance"
     assert decision.source_command["hurdle_action"] == "APPROACH_HURDLE"
     assert decision.source_command["line_guidance"]["motion"] == (
-        "RIGHT"
+        "STRAIGHT"
     )
 
 

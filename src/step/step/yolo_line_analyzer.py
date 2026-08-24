@@ -2230,6 +2230,9 @@ class YoloLineAnalyzer(Node):
 
         if len(segment_angles) < 2:
             return {
+                "path_turn_delta_deg":
+                    None,
+
                 "angle_change_mean_deg":
                     None,
 
@@ -2271,6 +2274,11 @@ class YoloLineAnalyzer(Node):
             )
         )
 
+        path_turn_delta = float(
+            angle_array[-1]
+            - angle_array[0]
+        )
+
         if (
             total_change_strength
             <= 1e-9
@@ -2292,6 +2300,9 @@ class YoloLineAnalyzer(Node):
             )
 
         return {
+            "path_turn_delta_deg":
+                path_turn_delta,
+
             "angle_change_mean_deg":
                 mean_change,
 
@@ -2678,6 +2689,9 @@ class YoloLineAnalyzer(Node):
                 None,
 
             "turn_angle_deg":
+                None,
+
+            "path_turn_delta_deg":
                 None,
 
             "angle_change_mean_deg":
@@ -3147,6 +3161,25 @@ class YoloLineAnalyzer(Node):
                     )
                     if (
                         turn_angle
+                        is not None
+                    )
+                    else None
+                ),
+
+            "path_turn_delta_deg":
+                (
+                    round(
+                        float(
+                            angle_stats[
+                                "path_turn_delta_deg"
+                            ]
+                        ),
+                        3,
+                    )
+                    if (
+                        angle_stats[
+                            "path_turn_delta_deg"
+                        ]
                         is not None
                     )
                     else None

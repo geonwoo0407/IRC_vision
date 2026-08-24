@@ -1496,6 +1496,8 @@ class Yolo26Detector(Node):
             if offset is None:
                 offset = self._number(info, "lateral_offset_norm")
             turn = self._number(info, "turn_angle_deg")
+            if turn is None:
+                turn = self._number(info, "path_turn_delta_deg")
             qualities = [
                 self._number(info, "heading_quality"),
                 self._number(info, "geometry_quality"),
@@ -1513,7 +1515,7 @@ class Yolo26Detector(Node):
                 + self._metric_text(heading, "deg", 1, signed=True),
                 "Offset norm : "
                 + self._metric_text(offset, "", 3, signed=True),
-                "Turn preview: "
+                "Curve turn : "
                 + self._metric_text(turn, "deg", 1, signed=True),
                 "Quality     : " + self._metric_text(quality, "", 3),
             ]

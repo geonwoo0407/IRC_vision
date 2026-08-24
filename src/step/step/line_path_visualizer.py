@@ -1191,6 +1191,9 @@ class LinePathVisualizer(Node):
             data.get("nearest_line_horizontal_distance_m"),
             3,
         )
+        curve_turn = data.get("turn_angle_deg")
+        if curve_turn is None:
+            curve_turn = data.get("path_turn_delta_deg")
 
         if motion.startswith("RECOVER_"):
             turn_motion = str(command.get("turn_motion") or "NONE")
@@ -1233,7 +1236,7 @@ class LinePathVisualizer(Node):
                     "FAR/TURN: "
                     + self._format_number(data.get("far_heading_deg"), 1)
                     + " / "
-                    + self._format_number(data.get("turn_angle_deg"), 1)
+                    + self._format_number(curve_turn, 1)
                     + " deg",
                     "REASON: " + str(command.get("reason", "unknown")),
                 ]

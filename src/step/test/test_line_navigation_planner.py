@@ -312,6 +312,43 @@ def test_small_heading_and_centered_offset_stays_straight():
     assert command.motion == "STRAIGHT"
 
 
+def test_slanted_straight_line_does_not_emit_plain_right():
+    planner = LineNavigationPlanner(
+        NavigationConfig(direction_confirmation_frames=1)
+    )
+
+    command = planner.plan(
+        line_info(
+            filtered_heading_error_deg=12.4,
+            filtered_lateral_offset_norm=0.106,
+            turn_angle_deg=0.2,
+            path_turn_delta_deg=0.3,
+            turn_consistency=1.0,
+        ),
+        0.1,
+    )
+
+    assert command.motion == "STRAIGHT"
+    assert command.reason == "straight_line_turn_suppressed"
+    assert command.angular_speed_rad_s == 0.0
+
+
+def test_real_right_curve_emits_plain_right_without_far_fit():
+    planner = LineNavigationPlanner()
+    curve = line_info(
+        filtered_heading_error_deg=22.2,
+        filtered_lateral_offset_norm=-0.079,
+        turn_angle_deg=None,
+        path_turn_delta_deg=18.0,
+        turn_consistency=0.9,
+    )
+
+    commands = [planner.plan(curve, 0.1) for _ in range(3)]
+
+    assert commands[-1].motion == "RIGHT"
+    assert commands[-1].preview_turn_deg == 18.0
+
+
 @pytest.mark.parametrize("recovery_side", ["LEFT", "RIGHT"])
 @pytest.mark.parametrize("turn_direction", ["LEFT", "RIGHT"])
 def test_recovery_side_does_not_change_numbered_turn_motion(
