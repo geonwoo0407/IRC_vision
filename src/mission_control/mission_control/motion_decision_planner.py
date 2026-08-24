@@ -11,6 +11,7 @@ from step.ball_navigation_planner import BallNavigationPlanner
 from step.goal_navigation_planner import GoalNavigationPlanner
 from step.hurdle_navigation_planner import HurdleNavigationPlanner
 from step.line_navigation_planner import LineNavigationPlanner
+from step.line_navigation_planner import NavigationConfig
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class MotionDecisionConfig:
     """Tunable mission-selection and lost-ball recovery limits."""
 
     enable_ball_lost_recovery: bool = False
+    recovery_heading_turn_deg: float = 5.0
     ball_tracking_range_m: float = 3.0
     ball_control_range_m: float = 0.9
     ball_lost_stop_sec: float = 0.35
@@ -79,7 +81,13 @@ class MotionDecisionPlanner:
         config: MotionDecisionConfig | None = None,
     ) -> None:
         self.config = config or MotionDecisionConfig()
-        self.line_planner = LineNavigationPlanner()
+        self.line_planner = LineNavigationPlanner(
+            NavigationConfig(
+                recovery_heading_turn_deg=(
+                    self.config.recovery_heading_turn_deg
+                )
+            )
+        )
         self.ball_planner = BallNavigationPlanner()
         self.goal_planner = GoalNavigationPlanner()
         self.hurdle_planner = HurdleNavigationPlanner()

@@ -93,7 +93,7 @@ steering_error
 + preview_gain × far_turn
 ```
 
-명령은 `STRAIGHT`, `LEFT`, `RIGHT`, `RECOVER_LEFT`, `RECOVER_RIGHT`, `STOP`입니다. quality가 낮거나 입력이 오래되면 STOP입니다. offset이 큰 경우 일반 회전보다 옆걸음 복귀를 우선하고 hysteresis로 경계 흔들림을 줄입니다.
+명령은 `STRAIGHT`, `LEFT`, `RIGHT`, `RECOVER_LEFT/RIGHT`, `RECOVER_*_TURN_LEFT/RIGHT_[1-6]`, `STOP`입니다. 복귀 회전은 카메라 중심선 대비 근거리 line heading을 15도 단위의 여섯 모션으로 양자화합니다. quality가 낮거나 입력이 오래되면 STOP입니다. offset이 큰 경우 일반 회전보다 복귀를 우선하고 hysteresis로 경계 흔들림을 줄입니다.
 
 ### 화면
 

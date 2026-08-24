@@ -477,7 +477,7 @@ mission_map_visualizer
 
 ```text
 valid                       명령 사용 가능 여부
-motion                      STOP / STRAIGHT / LEFT / RIGHT / RECOVER_LEFT / RECOVER_RIGHT
+motion                      STOP / STRAIGHT / LEFT / RIGHT / RECOVER_*_TURN_*_[1-6]
 reason                      명령 또는 정지 이유
 linear_speed_mps             목표 선속도
 lateral_speed_mps            라인 복귀용 좌우 속도(+오른쪽, -왼쪽)
@@ -487,6 +487,10 @@ command_duration_sec         이 명령의 권장 유지시간
 travel_distance_m            유지시간 동안의 예상 직진 이동량
 lateral_travel_distance_m    유지시간 동안의 예상 좌우 이동량
 target_heading_change_deg    유지시간 동안의 예상 회전량
+recovery_side               라인이 있는 쪽(LEFT / RIGHT)
+turn_motion                 실제 회전 후보(TURN_LEFT_1~6 / TURN_RIGHT_1~6)
+turn_level                  15도 단위 회전 단계(1~6)
+turn_angle_deg              단계별 목표 회전각(-90~+90도)
 steering_error_deg           heading/offset/preview를 합친 조향 오차
 line_quality                 사용된 최소 line quality
 valid_for_sec                수신 측 watchdog 유효시간
@@ -494,7 +498,7 @@ valid_for_sec                수신 측 watchdog 유효시간
 
 라인 미검출, 낮은 quality, 잘못된 값 또는 입력 timeout이면 `valid=false`, `motion=STOP`을 발행합니다. 기본 최대 선속도는 기존 휴머노이드 nominal speed에 맞춘 `0.05m/s`이며, 급커브일수록 자동 감속합니다. 로봇 실측에 맞춰 다음처럼 파라미터를 조정할 수 있습니다.
 
-라인 중심 offset 절댓값이 기본 `0.28` 이상이면 일반 회전과 구분하여 `RECOVER_LEFT` 또는 `RECOVER_RIGHT`를 발행합니다. 이때 전진과 커브 선행 보정은 멈추고 `lateral_speed_mps`만 사용합니다. offset이 `0.16` 안쪽으로 복귀할 때까지 복귀 상태를 유지하므로 경계에서 명령이 흔들리지 않습니다. 먼 커브 보정은 turn angle이 `8도` 이상이고 consistency가 `0.55` 이상일 때만 적용합니다.
+라인 중심 offset 절댓값이 기본 `0.20`을 넘거나 근거리 heading 절댓값이 `5도`를 넘으면 복귀 명령을 발행합니다. `RECOVER_LEFT/RIGHT`는 라인이 있는 쪽이고, 실제 회전 방향은 `TURN_LEFT/RIGHT`입니다. 회전은 카메라 중심선과 근거리 라인 사이의 heading 절댓값을 기준으로 `15`, `30`, `45`, `60`, `75`, `90`도의 6단계로 양자화합니다. 경계는 `5도 초과~22.5도 미만`, `22.5~37.5`, `37.5~52.5`, `52.5~67.5`, `67.5~82.5`, `82.5도 이상`이며 각 경계값은 다음 단계에 포함됩니다. offset이 `0.12` 안쪽으로 복귀할 때까지 복귀 상태를 유지하므로 경계에서 명령이 흔들리지 않습니다. 먼 커브 보정은 turn angle이 `8도` 이상이고 consistency가 `0.55` 이상일 때만 적용합니다.
 
 ```bash
 ros2 run step line_navigation_controller --ros-args \
@@ -502,6 +506,13 @@ ros2 run step line_navigation_controller --ros-args \
   -p max_angular_speed_rad_s:=0.45 \
   -p max_angular_accel_rad_s2:=0.8 \
   -p command_duration_sec:=0.5
+```
+
+통합 실행에서 복귀 회전 시작각을 바꾸려면 launch 인자를 사용합니다.
+
+```bash
+ros2 launch mission_control full_system.launch.py \
+  recovery_heading_turn_deg:=5.0
 ```
 
 방향 부호는 기존 line analyzer와 같습니다. 화면상 경로가 오른쪽이면 heading/offset이 양수이고 `RIGHT` 및 양의 각속도가 출력됩니다. 보행 알고리즘에서는 `command_id`가 새로 들어올 때 기존 목표를 새 값으로 교체해야 하며, `travel_distance_m`을 매 메시지마다 큐에 누적하면 안 됩니다. 또한 `valid_for_sec` 안에 새 명령이 없으면 자체적으로도 정지시키는 watchdog을 두는 것이 좋습니다.

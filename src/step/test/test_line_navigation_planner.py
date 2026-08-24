@@ -167,10 +167,10 @@ def test_large_offset_creates_separate_recovery_command(
 @pytest.mark.parametrize(
     ("offset", "heading", "expected", "angular_sign"),
     [
-        (0.593, -32.0, "RECOVER_RIGHT_TURN_LEFT", -1),
-        (0.366, 9.8, "RECOVER_RIGHT_TURN_RIGHT", 1),
-        (-0.40, -10.0, "RECOVER_LEFT_TURN_LEFT", -1),
-        (-0.40, 10.0, "RECOVER_LEFT_TURN_RIGHT", 1),
+        (0.593, -32.0, "RECOVER_RIGHT_TURN_LEFT_2", -1),
+        (0.366, 9.8, "RECOVER_RIGHT_TURN_RIGHT_1", 1),
+        (-0.40, -10.0, "RECOVER_LEFT_TURN_LEFT_1", -1),
+        (-0.40, 10.0, "RECOVER_LEFT_TURN_RIGHT_1", 1),
     ],
 )
 def test_recovery_separates_line_side_from_turn_direction(
@@ -206,7 +206,7 @@ def test_straight_line_heading_error_uses_recovery_not_plain_left():
         0.1,
     )
 
-    assert command.motion == "RECOVER_LEFT_TURN_LEFT"
+    assert command.motion == "RECOVER_LEFT_TURN_LEFT_1"
 
 
 def test_plain_left_is_reserved_for_confirmed_left_curve():
@@ -250,7 +250,80 @@ def test_moderate_offset_still_recovers_when_heading_is_too_large():
         0.1,
     )
 
-    assert command.motion == "RECOVER_LEFT_TURN_LEFT"
+    assert command.motion == "RECOVER_LEFT_TURN_LEFT_1"
+
+
+@pytest.mark.parametrize(
+    ("heading", "expected_level"),
+    [
+        (5.01, 1),
+        (22.499, 1),
+        (22.5, 2),
+        (37.499, 2),
+        (37.5, 3),
+        (52.5, 4),
+        (67.5, 5),
+        (82.499, 5),
+        (82.5, 6),
+        (90.0, 6),
+    ],
+)
+def test_right_recovery_turn_is_split_into_six_levels(
+    heading,
+    expected_level,
+):
+    planner = LineNavigationPlanner()
+
+    command = planner.plan(
+        line_info(
+            filtered_lateral_offset_norm=0.30,
+            filtered_heading_error_deg=heading,
+            turn_angle_deg=None,
+            turn_consistency=None,
+        ),
+        0.1,
+    )
+    payload = command.to_dict()
+
+    assert command.motion == (
+        f"RECOVER_RIGHT_TURN_RIGHT_{expected_level}"
+    )
+    assert payload["recovery_side"] == "RIGHT"
+    assert payload["turn_motion"] == f"TURN_RIGHT_{expected_level}"
+    assert payload["turn_level"] == expected_level
+    assert payload["turn_angle_deg"] == expected_level * 15.0
+    assert command.target_heading_change_deg == expected_level * 15.0
+
+
+@pytest.mark.parametrize("recovery_side", ["LEFT", "RIGHT"])
+@pytest.mark.parametrize("turn_direction", ["LEFT", "RIGHT"])
+def test_recovery_side_does_not_change_numbered_turn_motion(
+    recovery_side,
+    turn_direction,
+):
+    planner = LineNavigationPlanner()
+    offset = -0.30 if recovery_side == "LEFT" else 0.30
+    heading = -46.0 if turn_direction == "LEFT" else 46.0
+
+    command = planner.plan(
+        line_info(
+            filtered_lateral_offset_norm=offset,
+            filtered_heading_error_deg=heading,
+            turn_angle_deg=None,
+            turn_consistency=None,
+        ),
+        0.1,
+    )
+    payload = command.to_dict()
+
+    assert command.motion == (
+        f"RECOVER_{recovery_side}_TURN_{turn_direction}_3"
+    )
+    assert payload["recovery_side"] == recovery_side
+    assert payload["turn_motion"] == f"TURN_{turn_direction}_3"
+    assert payload["turn_angle_deg"] == (
+        -45.0 if turn_direction == "LEFT" else 45.0
+    )
 
 
 def test_recovery_uses_exit_threshold_before_returning_to_tracking():

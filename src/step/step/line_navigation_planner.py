@@ -8,6 +8,10 @@ import math
 from typing import Any
 
 
+RECOVERY_TURN_STEP_DEG = 15
+RECOVERY_TURN_MAX_LEVEL = 6
+
+
 @dataclass(frozen=True)
 class NavigationConfig:
     """Tunable limits and gains for line-following command generation."""
@@ -64,6 +68,9 @@ class NavigationCommand:
 
     def to_dict(self) -> dict[str, Any]:
         """Return a rounded JSON-compatible representation."""
+        recovery_side, turn_motion, turn_level, turn_angle_deg = (
+            _recovery_motion_metadata(self.motion)
+        )
         return {
             "valid": self.valid,
             "motion": self.motion,
@@ -91,6 +98,10 @@ class NavigationCommand:
             ),
             "preview_turn_deg": _round_optional(self.preview_turn_deg, 3),
             "line_quality": round(self.line_quality, 4),
+            "recovery_side": recovery_side,
+            "turn_motion": turn_motion,
+            "turn_level": turn_level,
+            "turn_angle_deg": turn_angle_deg,
         }
 
 
@@ -113,6 +124,49 @@ def _number(data: dict[str, Any], key: str) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _recovery_turn_level(heading_error_deg: float) -> int:
+    """Quantize a recovery heading to the nearest 15-degree motion."""
+    magnitude = abs(heading_error_deg)
+    level = math.floor(
+        (magnitude + RECOVERY_TURN_STEP_DEG / 2.0)
+        / RECOVERY_TURN_STEP_DEG
+    )
+    return int(_clamp(level, 1, RECOVERY_TURN_MAX_LEVEL))
+
+
+def _recovery_motion_metadata(
+    motion: str,
+) -> tuple[str | None, str | None, int | None, float | None]:
+    """Extract recovery side and the actual numbered turn motion."""
+    normalized = motion.strip().upper()
+    if normalized.startswith("RECOVER_RIGHT"):
+        recovery_side = "RIGHT"
+    elif normalized.startswith("RECOVER_LEFT"):
+        recovery_side = "LEFT"
+    else:
+        return None, None, None, None
+
+    for turn_direction, sign in (("RIGHT", 1.0), ("LEFT", -1.0)):
+        marker = f"_TURN_{turn_direction}_"
+        if marker not in normalized:
+            continue
+        level_text = normalized.rsplit(marker, 1)[1]
+        try:
+            level = int(level_text)
+        except ValueError:
+            return recovery_side, None, None, None
+        if not 1 <= level <= RECOVERY_TURN_MAX_LEVEL:
+            return recovery_side, None, None, None
+        angle_deg = sign * level * RECOVERY_TURN_STEP_DEG
+        return (
+            recovery_side,
+            f"TURN_{turn_direction}_{level}",
+            level,
+            float(angle_deg),
+        )
+    return recovery_side, None, None, None
 
 
 class LineNavigationPlanner:
@@ -365,9 +419,11 @@ class LineNavigationPlanner:
             line_side = "RIGHT" if heading_error_deg > 0.0 else "LEFT"
 
         if heading_error_deg > self.config.recovery_heading_turn_deg:
-            return f"RECOVER_{line_side}_TURN_RIGHT"
+            level = _recovery_turn_level(heading_error_deg)
+            return f"RECOVER_{line_side}_TURN_RIGHT_{level}"
         if heading_error_deg < -self.config.recovery_heading_turn_deg:
-            return f"RECOVER_{line_side}_TURN_LEFT"
+            level = _recovery_turn_level(heading_error_deg)
+            return f"RECOVER_{line_side}_TURN_LEFT_{level}"
         return f"RECOVER_{line_side}"
 
     def _recovery_command(
@@ -381,9 +437,10 @@ class LineNavigationPlanner:
         line_side = "RIGHT" if motion.startswith("RECOVER_RIGHT") else "LEFT"
         direction = 1.0 if line_side == "RIGHT" else -1.0
         lateral_speed = direction * self.config.recovery_lateral_speed_mps
-        if motion.endswith("TURN_RIGHT"):
+        _, _, turn_level, turn_angle_deg = _recovery_motion_metadata(motion)
+        if "_TURN_RIGHT_" in motion:
             angular_speed = self.config.recovery_turn_speed_rad_s
-        elif motion.endswith("TURN_LEFT"):
+        elif "_TURN_LEFT_" in motion:
             angular_speed = -self.config.recovery_turn_speed_rad_s
         else:
             angular_speed = 0.0
@@ -401,7 +458,11 @@ class LineNavigationPlanner:
             command_duration_sec=duration,
             travel_distance_m=0.0,
             lateral_travel_distance_m=lateral_speed * duration,
-            target_heading_change_deg=math.degrees(angular_speed * duration),
+            target_heading_change_deg=(
+                turn_angle_deg
+                if turn_level is not None and turn_angle_deg is not None
+                else math.degrees(angular_speed * duration)
+            ),
             steering_error_deg=0.0,
             heading_component_deg=heading,
             offset_component_deg=self.config.offset_gain_deg * offset,

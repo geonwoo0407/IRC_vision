@@ -1173,10 +1173,16 @@ class LinePathVisualizer(Node):
         )
 
         if motion.startswith("RECOVER_"):
+            turn_motion = str(command.get("turn_motion") or "NONE")
+            turn_target = self._format_number(
+                command.get("turn_angle_deg"),
+                1,
+            )
             lines = [
                 f"NAVIGATION : {motion}",
                 f"SIDE SPEED {lateral_speed} m/s  |  TURN {turn_rate} rad/s",
                 f"SIDE MOVE {lateral_distance} m  |  {duration} s",
+                f"TURN MOTION {turn_motion}  |  TARGET {turn_target} deg",
                 "MODE : RETURN TO LINE CENTER",
                 "CURVE PREVIEW DISABLED DURING RECOVERY",
                 "QUALITY "

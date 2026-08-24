@@ -21,6 +21,9 @@ def generate_launch_description() -> LaunchDescription:
     metrics_mode = LaunchConfiguration("metrics_mode")
     max_fps = LaunchConfiguration("max_fps")
     initial_mission_phase = LaunchConfiguration("initial_mission_phase")
+    recovery_heading_turn_deg = LaunchConfiguration(
+        "recovery_heading_turn_deg"
+    )
 
     camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -67,7 +70,15 @@ def generate_launch_description() -> LaunchDescription:
         name="motion_decision_node",
         output="screen",
         emulate_tty=True,
-        parameters=[{"initial_mission_phase": initial_mission_phase}],
+        parameters=[
+            {
+                "initial_mission_phase": initial_mission_phase,
+                "recovery_heading_turn_deg": ParameterValue(
+                    recovery_heading_turn_deg,
+                    value_type=float,
+                ),
+            }
+        ],
     )
 
     return LaunchDescription(
@@ -101,6 +112,11 @@ def generate_launch_description() -> LaunchDescription:
                 "initial_mission_phase",
                 default_value="AUTO",
                 description="Initial planner phase before /mission/phase is received.",
+            ),
+            DeclareLaunchArgument(
+                "recovery_heading_turn_deg",
+                default_value="5.0",
+                description="Heading deadband before numbered recovery turns.",
             ),
             camera,
             detector,

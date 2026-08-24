@@ -160,12 +160,28 @@ def test_distant_hurdle_approach_uses_line_direction():
         )
 
     assert decision.source == "hurdle"
-    assert decision.action == "RECOVER_RIGHT_TURN_RIGHT"
+    assert decision.action == "RECOVER_RIGHT_TURN_RIGHT_1"
     assert decision.reason == "hurdle_approach_with_line_guidance"
     assert decision.source_command["hurdle_action"] == "APPROACH_HURDLE"
     assert decision.source_command["line_guidance"]["motion"] == (
-        "RECOVER_RIGHT_TURN_RIGHT"
+        "RECOVER_RIGHT_TURN_RIGHT_1"
     )
+
+
+def test_recovery_heading_deadband_is_configurable():
+    planner = MotionDecisionPlanner(
+        MotionDecisionConfig(recovery_heading_turn_deg=10.0)
+    )
+    line = line_info()
+    line["filtered_heading_error_deg"] = 7.0
+
+    decision = planner.plan(
+        "LINE_TRACK",
+        observations(line=line),
+        0.1,
+    )
+
+    assert decision.action == "STRAIGHT"
 
 
 def test_hurdle_without_depth_falls_back_to_line_direction():

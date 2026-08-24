@@ -1179,6 +1179,23 @@ class Yolo26Detector(Node):
         }
         if normalized_source == "line":
             label = line_labels.get(normalized_action)
+            if label is None:
+                base_action, separator, level_text = (
+                    normalized_action.rpartition("_")
+                )
+                base_label = line_labels.get(base_action)
+                if (
+                    separator
+                    and base_label is not None
+                    and "_TURN_" in base_action
+                    and level_text.isdigit()
+                ):
+                    level = int(level_text)
+                    if 1 <= level <= 6:
+                        label = (
+                            f"{base_label} {level} "
+                            f"({level * 15} DEG)"
+                        )
             return (label, (130, 105, 0)) if label is not None else None
         if normalized_source == "ball":
             label = ball_labels.get(normalized_action)
