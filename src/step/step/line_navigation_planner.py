@@ -21,7 +21,7 @@ class NavigationConfig:
     min_linear_speed_mps: float = 0.015
     recovery_lateral_speed_mps: float = 0.025
     recovery_turn_speed_rad_s: float = 0.22
-    recovery_heading_turn_deg: float = 5.0
+    recovery_heading_turn_deg: float = 15.0
     recovery_straight_offset_norm: float = 0.45
     recovery_parallel_heading_deg: float = 2.0
     max_angular_speed_rad_s: float = 0.60
@@ -395,7 +395,7 @@ class LineNavigationPlanner:
         points_slightly_toward_line = bool(
             lateral_offset_norm * heading_error_deg > 0.0
             and abs(heading_error_deg)
-            <= self.config.recovery_heading_turn_deg
+            < self.config.recovery_heading_turn_deg
         )
         if (
             inside_straight_corridor
@@ -405,7 +405,7 @@ class LineNavigationPlanner:
 
         offset_requires_recovery = abs(lateral_offset_norm) > threshold
         heading_requires_recovery = bool(
-            abs(heading_error_deg) > self.config.recovery_heading_turn_deg
+            abs(heading_error_deg) >= self.config.recovery_heading_turn_deg
             and not curve_matches_heading
         )
         if not offset_requires_recovery and not heading_requires_recovery:
@@ -418,10 +418,10 @@ class LineNavigationPlanner:
         else:
             line_side = "RIGHT" if heading_error_deg > 0.0 else "LEFT"
 
-        if heading_error_deg > self.config.recovery_heading_turn_deg:
+        if heading_error_deg >= self.config.recovery_heading_turn_deg:
             level = _recovery_turn_level(heading_error_deg)
             return f"RECOVER_{line_side}_TURN_RIGHT_{level}"
-        if heading_error_deg < -self.config.recovery_heading_turn_deg:
+        if heading_error_deg <= -self.config.recovery_heading_turn_deg:
             level = _recovery_turn_level(heading_error_deg)
             return f"RECOVER_{line_side}_TURN_LEFT_{level}"
         return f"RECOVER_{line_side}"

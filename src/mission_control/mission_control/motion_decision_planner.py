@@ -46,7 +46,7 @@ class MotionDecisionConfig:
     """Tunable mission-selection and lost-ball recovery limits."""
 
     enable_ball_lost_recovery: bool = False
-    recovery_heading_turn_deg: float = 5.0
+    recovery_heading_turn_deg: float = 15.0
     ball_tracking_range_m: float = 3.0
     ball_control_range_m: float = 0.9
     ball_lost_stop_sec: float = 0.35

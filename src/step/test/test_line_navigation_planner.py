@@ -55,7 +55,7 @@ def test_heading_sign_selects_turn_direction(heading, expected):
     assert command.motion == expected
 
 
-@pytest.mark.parametrize("heading", [-4.9, 0.0, 4.9])
+@pytest.mark.parametrize("heading", [-14.9, 0.0, 14.9])
 def test_wider_straight_deadband(heading):
     planner = LineNavigationPlanner()
 
@@ -168,9 +168,9 @@ def test_large_offset_creates_separate_recovery_command(
     ("offset", "heading", "expected", "angular_sign"),
     [
         (0.593, -32.0, "RECOVER_RIGHT_TURN_LEFT_2", -1),
-        (0.366, 9.8, "RECOVER_RIGHT_TURN_RIGHT_1", 1),
-        (-0.40, -10.0, "RECOVER_LEFT_TURN_LEFT_1", -1),
-        (-0.40, 10.0, "RECOVER_LEFT_TURN_RIGHT_1", 1),
+        (0.366, 15.0, "RECOVER_RIGHT_TURN_RIGHT_1", 1),
+        (-0.40, -15.0, "RECOVER_LEFT_TURN_LEFT_1", -1),
+        (-0.40, 15.0, "RECOVER_LEFT_TURN_RIGHT_1", 1),
     ],
 )
 def test_recovery_separates_line_side_from_turn_direction(
@@ -238,7 +238,7 @@ def test_moderate_offset_and_parallel_line_can_continue_straight():
     assert command.motion == "STRAIGHT"
 
 
-def test_moderate_offset_still_recovers_when_heading_is_too_large():
+def test_moderate_offset_heading_toward_line_stays_straight():
     planner = LineNavigationPlanner()
 
     command = planner.plan(
@@ -250,13 +250,14 @@ def test_moderate_offset_still_recovers_when_heading_is_too_large():
         0.1,
     )
 
-    assert command.motion == "RECOVER_LEFT_TURN_LEFT_1"
+    assert command.motion == "STRAIGHT"
+    assert command.angular_speed_rad_s == 0.0
 
 
 @pytest.mark.parametrize(
     ("heading", "expected_level"),
     [
-        (5.01, 1),
+        (15.0, 1),
         (22.499, 1),
         (22.5, 2),
         (37.499, 2),
@@ -293,6 +294,22 @@ def test_right_recovery_turn_is_split_into_six_levels(
     assert payload["turn_level"] == expected_level
     assert payload["turn_angle_deg"] == expected_level * 15.0
     assert command.target_heading_change_deg == expected_level * 15.0
+
+
+def test_small_heading_and_centered_offset_stays_straight():
+    planner = LineNavigationPlanner()
+
+    command = planner.plan(
+        line_info(
+            filtered_heading_error_deg=-5.7,
+            filtered_lateral_offset_norm=0.007,
+            turn_angle_deg=70.7,
+            turn_consistency=0.9,
+        ),
+        0.1,
+    )
+
+    assert command.motion == "STRAIGHT"
 
 
 @pytest.mark.parametrize("recovery_side", ["LEFT", "RIGHT"])
