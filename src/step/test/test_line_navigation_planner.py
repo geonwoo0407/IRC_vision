@@ -50,7 +50,7 @@ def test_heading_sign_selects_turn_direction(heading, expected):
     assert command.motion == expected
 
 
-def test_offset_and_preview_are_used_for_steering():
+def test_far_curve_does_not_start_turn_before_near_heading():
     planner = LineNavigationPlanner()
 
     command = planner.plan(
@@ -61,8 +61,24 @@ def test_offset_and_preview_are_used_for_steering():
         0.1,
     )
 
-    assert command.motion == "RIGHT"
+    assert command.motion == "STRAIGHT"
+    assert command.reason == "turn_approach_pending"
     assert command.steering_error_deg > 7.0
+
+
+def test_far_curve_turn_starts_when_near_heading_reaches_corner():
+    planner = LineNavigationPlanner()
+
+    command = planner.plan(
+        line_info(
+            filtered_heading_error_deg=6.0,
+            filtered_lateral_offset_norm=0.1,
+            turn_angle_deg=40.0,
+        ),
+        0.1,
+    )
+
+    assert command.motion == "RIGHT"
 
 
 @pytest.mark.parametrize(

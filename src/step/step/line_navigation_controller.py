@@ -38,6 +38,7 @@ class LineNavigationController(Node):
         self.declare_parameter("steering_response_sec", 0.70)
         self.declare_parameter("turn_enter_deg", 7.0)
         self.declare_parameter("turn_exit_deg", 4.0)
+        self.declare_parameter("turn_min_heading_deg", 5.0)
         self.declare_parameter("recovery_enter_offset_norm", 0.28)
         self.declare_parameter("recovery_exit_offset_norm", 0.16)
         self.declare_parameter("command_duration_sec", 0.40)
@@ -73,6 +74,9 @@ class LineNavigationController(Node):
             ),
             turn_enter_deg=self._float_parameter("turn_enter_deg"),
             turn_exit_deg=self._float_parameter("turn_exit_deg"),
+            turn_min_heading_deg=self._float_parameter(
+                "turn_min_heading_deg"
+            ),
             recovery_enter_offset_norm=self._float_parameter(
                 "recovery_enter_offset_norm"
             ),

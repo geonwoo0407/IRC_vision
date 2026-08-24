@@ -26,6 +26,7 @@ class NavigationConfig:
     steering_response_sec: float = 0.70
     turn_enter_deg: float = 7.0
     turn_exit_deg: float = 4.0
+    turn_min_heading_deg: float = 5.0
     recovery_enter_offset_norm: float = 0.28
     recovery_exit_offset_norm: float = 0.16
     command_duration_sec: float = 0.40
@@ -233,7 +234,20 @@ class LineNavigationPlanner:
         angular_accel = angular_delta / dt_sec
 
         motion = self._classify_motion(steering_error)
+        turn_approach_pending = bool(
+            (motion == "RIGHT"
+             and heading <= self.config.turn_min_heading_deg)
+            or (motion == "LEFT"
+                and heading >= -self.config.turn_min_heading_deg)
+        )
+        if turn_approach_pending:
+            motion = "STRAIGHT"
         speed = self._calculate_linear_speed(steering_error, quality)
+        reason = (
+            "turn_approach_pending"
+            if turn_approach_pending
+            else "line_tracking"
+        )
         duration = self.config.command_duration_sec
 
         self.previous_motion = motion
@@ -242,7 +256,7 @@ class LineNavigationPlanner:
         return NavigationCommand(
             valid=True,
             motion=motion,
-            reason="line_tracking",
+            reason=reason,
             linear_speed_mps=speed,
             lateral_speed_mps=0.0,
             angular_speed_rad_s=angular_speed,
