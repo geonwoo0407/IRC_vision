@@ -56,6 +56,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
+from .temporal_confirmation import TemporalConfirmationFilter
+
 
 # ============================================================
 # Data classes
@@ -201,22 +203,22 @@ class YoloLineAnalyzer(Node):
 
         self.declare_parameter(
             "roi_x_min_ratio",
-            0.05,
+            0.25,
         )
 
         self.declare_parameter(
             "roi_x_max_ratio",
-            0.95,
+            0.75,
         )
 
         self.declare_parameter(
             "roi_y_min_ratio",
-            0.05,
+            0.0,
         )
 
         self.declare_parameter(
             "roi_y_max_ratio",
-            0.97,
+            1.0,
         )
 
         # ====================================================
@@ -281,7 +283,7 @@ class YoloLineAnalyzer(Node):
         # extremely exaggerated.
         self.declare_parameter(
             "min_segment_dy_px",
-            35.0,
+            20.0,
         )
 
         # ====================================================
@@ -292,7 +294,7 @@ class YoloLineAnalyzer(Node):
         # the immediate heading.
         self.declare_parameter(
             "heading_segment_count",
-            2,
+            3,
         )
 
         # Weight decay:
@@ -302,7 +304,7 @@ class YoloLineAnalyzer(Node):
         # segment 3 -> 0.1225
         self.declare_parameter(
             "heading_weight_decay",
-            0.35,
+            0.65,
         )
 
         # Heading standard deviation regarded as poor stability.
@@ -403,6 +405,21 @@ class YoloLineAnalyzer(Node):
         self.declare_parameter(
             "filter_reset_missed_frames",
             5,
+        )
+
+        self.declare_parameter(
+            "confirmation_window_size",
+            3,
+        )
+
+        self.declare_parameter(
+            "confirmation_required_hits",
+            2,
+        )
+
+        self.declare_parameter(
+            "confirmation_max_missed_frames",
+            2,
         )
 
         # ====================================================
@@ -625,6 +642,25 @@ class YoloLineAnalyzer(Node):
             ),
         )
 
+        self.confirmation_filter = TemporalConfirmationFilter(
+            window_size=int(
+                self.get_parameter(
+                    "confirmation_window_size"
+                ).value
+            ),
+            required_hits=int(
+                self.get_parameter(
+                    "confirmation_required_hits"
+                ).value
+            ),
+            max_missed_frames=int(
+                self.get_parameter(
+                    "confirmation_max_missed_frames"
+                ).value
+            ),
+            spatial_matching=False,
+        )
+
         # ====================================================
         # Camera resolution
         # ====================================================
@@ -799,6 +835,36 @@ class YoloLineAnalyzer(Node):
             result = self._analyze_line(
                 points
             )
+
+            raw_detected = bool(
+                result.get(
+                    "detected",
+                    False,
+                )
+            )
+
+            confirmation = (
+                self.confirmation_filter.update(
+                    raw_detected,
+                )
+            )
+
+            result.update(
+                confirmation.as_dict()
+            )
+
+            result["detected"] = bool(
+                raw_detected
+                and confirmation.confirmed
+            )
+
+            if (
+                raw_detected
+                and not confirmation.confirmed
+            ):
+                result["confirmation_note"] = (
+                    "line_confirmation_pending"
+                )
 
             result.update(
                 {

@@ -28,6 +28,10 @@ class LineNavigationController(Node):
         self.declare_parameter("max_linear_speed_mps", 0.05)
         self.declare_parameter("min_linear_speed_mps", 0.015)
         self.declare_parameter("recovery_lateral_speed_mps", 0.025)
+        self.declare_parameter("recovery_turn_speed_rad_s", 0.22)
+        self.declare_parameter("recovery_heading_turn_deg", 5.0)
+        self.declare_parameter("recovery_straight_offset_norm", 0.45)
+        self.declare_parameter("recovery_parallel_heading_deg", 2.0)
         self.declare_parameter("max_angular_speed_rad_s", 0.60)
         self.declare_parameter("max_angular_accel_rad_s2", 1.20)
         self.declare_parameter("heading_gain", 1.0)
@@ -36,11 +40,13 @@ class LineNavigationController(Node):
         self.declare_parameter("preview_min_turn_deg", 8.0)
         self.declare_parameter("preview_min_consistency", 0.55)
         self.declare_parameter("steering_response_sec", 0.70)
-        self.declare_parameter("turn_enter_deg", 7.0)
-        self.declare_parameter("turn_exit_deg", 4.0)
+        self.declare_parameter("turn_enter_deg", 12.0)
+        self.declare_parameter("turn_exit_deg", 7.0)
         self.declare_parameter("turn_min_heading_deg", 5.0)
-        self.declare_parameter("recovery_enter_offset_norm", 0.28)
-        self.declare_parameter("recovery_exit_offset_norm", 0.16)
+        self.declare_parameter("direction_confirmation_frames", 3)
+        self.declare_parameter("ambiguity_min_angle_deg", 25.0)
+        self.declare_parameter("recovery_enter_offset_norm", 0.20)
+        self.declare_parameter("recovery_exit_offset_norm", 0.12)
         self.declare_parameter("command_duration_sec", 0.40)
 
         config = NavigationConfig(
@@ -53,6 +59,18 @@ class LineNavigationController(Node):
             ),
             recovery_lateral_speed_mps=self._float_parameter(
                 "recovery_lateral_speed_mps"
+            ),
+            recovery_turn_speed_rad_s=self._float_parameter(
+                "recovery_turn_speed_rad_s"
+            ),
+            recovery_heading_turn_deg=self._float_parameter(
+                "recovery_heading_turn_deg"
+            ),
+            recovery_straight_offset_norm=self._float_parameter(
+                "recovery_straight_offset_norm"
+            ),
+            recovery_parallel_heading_deg=self._float_parameter(
+                "recovery_parallel_heading_deg"
             ),
             max_angular_speed_rad_s=self._float_parameter(
                 "max_angular_speed_rad_s"
@@ -76,6 +94,12 @@ class LineNavigationController(Node):
             turn_exit_deg=self._float_parameter("turn_exit_deg"),
             turn_min_heading_deg=self._float_parameter(
                 "turn_min_heading_deg"
+            ),
+            direction_confirmation_frames=int(
+                self.get_parameter("direction_confirmation_frames").value
+            ),
+            ambiguity_min_angle_deg=self._float_parameter(
+                "ambiguity_min_angle_deg"
             ),
             recovery_enter_offset_norm=self._float_parameter(
                 "recovery_enter_offset_norm"
