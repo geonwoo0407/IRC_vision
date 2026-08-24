@@ -114,6 +114,13 @@ ros2 launch mission_control full_system.launch.py
 ros2 launch mission_control full_system.launch.py enable_camera:=false
 ```
 
+로봇 정중앙과 RealSense RGB 광축의 장착 오차를 보정하기 위해 라인 기준 중심은 1280px 영상의 중앙 `x=640`보다 오른쪽으로 `70px` 이동한 `x=710`을 기본으로 사용합니다. 현재 실측 화면에서 로봇이 라인 중앙일 때 표시된 `OFFSET +69.9px`를 0으로 맞춘 값입니다. 현장에서 다시 보정할 때는 다음 launch 인자를 조정합니다.
+
+```bash
+ros2 launch mission_control full_system.launch.py \
+  robot_center_offset_px:=70.0
+```
+
 ### 경기용 통합 실행
 
 기존 line, ball, goal, hurdle 파일은 유지하면서 네 analyzer를 한 프로세스에서 실행하고, 네 navigation controller 대신 하나의 motion decision node가 기존 planner를 직접 호출합니다.

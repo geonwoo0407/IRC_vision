@@ -24,6 +24,9 @@ def generate_launch_description() -> LaunchDescription:
     recovery_heading_turn_deg = LaunchConfiguration(
         "recovery_heading_turn_deg"
     )
+    robot_center_offset_px = LaunchConfiguration(
+        "robot_center_offset_px"
+    )
 
     camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -62,6 +65,14 @@ def generate_launch_description() -> LaunchDescription:
         executable="unified_vision_node",
         output="screen",
         emulate_tty=True,
+        parameters=[
+            {
+                "robot_center_offset_px": ParameterValue(
+                    robot_center_offset_px,
+                    value_type=float,
+                )
+            }
+        ],
     )
 
     motion_decision = Node(
@@ -117,6 +128,11 @@ def generate_launch_description() -> LaunchDescription:
                 "recovery_heading_turn_deg",
                 default_value="5.0",
                 description="Heading deadband before numbered recovery turns.",
+            ),
+            DeclareLaunchArgument(
+                "robot_center_offset_px",
+                default_value="70.0",
+                description="Robot center shift right from image midpoint.",
             ),
             camera,
             detector,

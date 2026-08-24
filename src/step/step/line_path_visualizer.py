@@ -386,11 +386,12 @@ class LinePathVisualizer(Node):
 
         annotated = frame.copy()
 
-        self._draw_camera_center(
-            annotated
-        )
-
         line_info = self._get_fresh_line_info()
+
+        self._draw_camera_center(
+            annotated,
+            line_info,
+        )
 
         navigation_command = (
             self._get_fresh_navigation_command()
@@ -430,6 +431,7 @@ class LinePathVisualizer(Node):
             self._draw_navigation_arrow(
                 annotated,
                 navigation_command,
+                line_info,
             )
 
         if (
@@ -585,11 +587,12 @@ class LinePathVisualizer(Node):
     def _draw_camera_center(
         self,
         frame: np.ndarray,
+        data: dict[str, Any] | None,
     ) -> None:
-        """Draw camera/image center reference."""
+        """Draw the calibrated robot center reference."""
         height, width = frame.shape[:2]
 
-        center_x = width // 2
+        center_x = self._robot_center_x(width, data)
 
         cv2.line(
             frame,
@@ -603,7 +606,7 @@ class LinePathVisualizer(Node):
         if self.show_geometry_labels:
             cv2.putText(
                 frame,
-                "CAMERA CENTER",
+                "ROBOT CENTER",
                 (
                     center_x + 10,
                     25,
@@ -614,6 +617,19 @@ class LinePathVisualizer(Node):
                 2,
                 cv2.LINE_AA,
             )
+
+    @staticmethod
+    def _robot_center_x(
+        width: int,
+        data: dict[str, Any] | None,
+    ) -> int:
+        """Read a calibrated center from line info with a safe fallback."""
+        value = data.get("robot_center_x_px") if data is not None else None
+        try:
+            center_x = int(round(float(value)))
+        except (TypeError, ValueError):
+            center_x = width // 2
+        return max(0, min(width - 1, center_x))
 
     # ========================================================
     # Point parsing
@@ -840,7 +856,7 @@ class LinePathVisualizer(Node):
             start_x, start_y = points[0]
 
         else:
-            start_x = width // 2
+            start_x = self._robot_center_x(width, data)
             start_y = int(
                 height * 0.82
             )
@@ -926,7 +942,7 @@ class LinePathVisualizer(Node):
 
         height, width = frame.shape[:2]
 
-        center_x = width // 2
+        center_x = self._robot_center_x(width, data)
 
         eval_y = int(
             height * 0.82
@@ -1005,12 +1021,16 @@ class LinePathVisualizer(Node):
         self,
         frame: np.ndarray,
         command: dict[str, Any],
+        line_info: dict[str, Any] | None,
     ) -> None:
-        """Draw the final steering target from the robot/camera center."""
+        """Draw the final steering target from the calibrated robot center."""
         motion = str(command.get("motion", "STOP")).upper()
         color = self._motion_color(motion)
         height, width = frame.shape[:2]
-        start = (width // 2, int(height * 0.93))
+        start = (
+            self._robot_center_x(width, line_info),
+            int(height * 0.93),
+        )
 
         if motion == "STOP" or not bool(command.get("valid", False)):
             radius = 32

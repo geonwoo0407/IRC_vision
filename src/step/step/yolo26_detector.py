@@ -1545,7 +1545,16 @@ class Yolo26Detector(Node):
             return
 
         height, width = image.shape[:2]
-        center_x = width // 2
+        calibrated_center_x = self._number(info, "robot_center_x_px")
+        center_x = int(
+            np.clip(
+                round(calibrated_center_x)
+                if calibrated_center_x is not None
+                else width // 2,
+                0,
+                width - 1,
+            )
+        )
         cv2.line(
             image,
             (center_x, 0),
@@ -1556,7 +1565,7 @@ class Yolo26Detector(Node):
         )
         cv2.putText(
             image,
-            "CAMERA CENTER",
+            "ROBOT CENTER",
             (center_x + 10, 52),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,

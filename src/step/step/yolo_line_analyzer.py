@@ -117,6 +117,17 @@ class FittedLine:
     y_span_px: float
 
 
+def calibrated_robot_center_x(
+    image_width: int,
+    center_offset_px: float,
+) -> float:
+    """Shift the image midpoint to the robot's calibrated center."""
+    if image_width <= 0:
+        return 0.0
+    center_x = image_width / 2.0 + center_offset_px
+    return float(np.clip(center_x, 0.0, image_width - 1.0))
+
+
 # ============================================================
 # Main ROS 2 node
 # ============================================================
@@ -188,6 +199,7 @@ class YoloLineAnalyzer(Node):
         self.declare_parameter("depth_timeout_sec", 0.7)
         self.declare_parameter("depth_window_px", 9)
         self.declare_parameter("max_valid_depth_m", 4.0)
+        self.declare_parameter("robot_center_offset_px", 70.0)
 
         # ====================================================
         # Detection filtering
@@ -684,6 +696,9 @@ class YoloLineAnalyzer(Node):
         # Default until first Image message arrives.
         self.image_width = 1280
         self.image_height = 720
+        self.robot_center_offset_px = float(
+            self.get_parameter("robot_center_offset_px").value
+        )
 
         self.bridge = CvBridge()
         self.latest_depth_image: np.ndarray | None = None
@@ -811,6 +826,11 @@ class YoloLineAnalyzer(Node):
 
         self.get_logger().info(
             f"Publishing line info: {output_topic}"
+        )
+
+        self.get_logger().info(
+            "Robot center calibration: image midpoint "
+            f"{self.robot_center_offset_px:+.1f}px"
         )
 
         self.get_logger().info(
@@ -2568,6 +2588,13 @@ class YoloLineAnalyzer(Node):
                 ),
         }
 
+    def _robot_center_x_px(self) -> float:
+        """Return the calibrated robot center in image pixels."""
+        return calibrated_robot_center_x(
+            self.image_width,
+            self.robot_center_offset_px,
+        )
+
     # ========================================================
     # Empty result
     # ========================================================
@@ -2586,6 +2613,18 @@ class YoloLineAnalyzer(Node):
 
             "center_points_px":
                 [],
+
+            "robot_center_x_px":
+                round(
+                    self._robot_center_x_px(),
+                    3,
+                ),
+
+            "robot_center_offset_px":
+                round(
+                    self.robot_center_offset_px,
+                    3,
+                ),
 
             "nearest_line_point_px":
                 None,
@@ -2886,20 +2925,19 @@ class YoloLineAnalyzer(Node):
             + offset_fit.intercept
         )
 
-        image_center_x = (
-            self.image_width / 2.0
-        )
+        robot_center_x = self._robot_center_x_px()
+        image_half_width = self.image_width / 2.0
 
         lateral_offset_px = (
             predicted_line_x
-            - image_center_x
+            - robot_center_x
         )
 
         lateral_offset_norm = (
             lateral_offset_px
-            / image_center_x
+            / image_half_width
             if (
-                image_center_x > 0
+                image_half_width > 0
             )
             else 0.0
         )
@@ -2984,6 +3022,18 @@ class YoloLineAnalyzer(Node):
                 ],
 
             **nearest_line_distance,
+
+            "robot_center_x_px":
+                round(
+                    robot_center_x,
+                    3,
+                ),
+
+            "robot_center_offset_px":
+                round(
+                    self.robot_center_offset_px,
+                    3,
+                ),
 
             "segment_angles_deg":
                 segment_angles,
