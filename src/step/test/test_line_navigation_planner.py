@@ -67,7 +67,7 @@ def test_wider_straight_deadband(heading):
     assert command.motion == "STRAIGHT"
 
 
-def test_offset_and_preview_are_used_for_steering():
+def test_far_curve_slows_down_without_starting_turn_early():
     planner = LineNavigationPlanner(
         NavigationConfig(direction_confirmation_frames=1)
     )
@@ -80,8 +80,27 @@ def test_offset_and_preview_are_used_for_steering():
         0.1,
     )
 
-    assert command.motion == "RIGHT"
+    assert command.motion == "STRAIGHT"
+    assert command.reason == "turn_approach_pending"
     assert command.steering_error_deg > 12.0
+    assert command.linear_speed_mps < planner.config.max_linear_speed_mps
+
+
+def test_far_curve_turn_starts_after_near_heading_reaches_corner():
+    planner = LineNavigationPlanner(
+        NavigationConfig(direction_confirmation_frames=1)
+    )
+
+    command = planner.plan(
+        line_info(
+            filtered_heading_error_deg=6.0,
+            filtered_lateral_offset_norm=0.1,
+            turn_angle_deg=80.0,
+        ),
+        0.1,
+    )
+
+    assert command.motion == "RIGHT"
 
 
 def test_conflicting_heading_and_preview_holds_slow_straight():

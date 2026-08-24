@@ -30,6 +30,7 @@ class NavigationConfig:
     steering_response_sec: float = 0.70
     turn_enter_deg: float = 12.0
     turn_exit_deg: float = 7.0
+    turn_min_heading_deg: float = 5.0
     direction_confirmation_frames: int = 3
     ambiguity_min_angle_deg: float = 25.0
     recovery_enter_offset_norm: float = 0.20
@@ -239,6 +240,14 @@ class LineNavigationPlanner:
         )
 
         requested_motion = self._classify_motion(steering_error)
+        turn_approach_pending = bool(
+            (requested_motion == "RIGHT"
+             and heading <= self.config.turn_min_heading_deg)
+            or (requested_motion == "LEFT"
+                and heading >= -self.config.turn_min_heading_deg)
+        )
+        if turn_approach_pending:
+            requested_motion = "STRAIGHT"
         motion = self._confirm_motion(requested_motion)
         turn_confirmation_pending = bool(
             motion == "STRAIGHT" and requested_motion in {"LEFT", "RIGHT"}
@@ -272,6 +281,8 @@ class LineNavigationPlanner:
         if direction_is_ambiguous:
             speed = self.config.min_linear_speed_mps
             reason = "conflicting_heading_and_preview"
+        elif turn_approach_pending:
+            reason = "turn_approach_pending"
         elif turn_confirmation_pending:
             speed = self.config.min_linear_speed_mps
             reason = "turn_confirmation_pending"

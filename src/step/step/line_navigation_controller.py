@@ -42,6 +42,7 @@ class LineNavigationController(Node):
         self.declare_parameter("steering_response_sec", 0.70)
         self.declare_parameter("turn_enter_deg", 12.0)
         self.declare_parameter("turn_exit_deg", 7.0)
+        self.declare_parameter("turn_min_heading_deg", 5.0)
         self.declare_parameter("direction_confirmation_frames", 3)
         self.declare_parameter("ambiguity_min_angle_deg", 25.0)
         self.declare_parameter("recovery_enter_offset_norm", 0.20)
@@ -91,6 +92,9 @@ class LineNavigationController(Node):
             ),
             turn_enter_deg=self._float_parameter("turn_enter_deg"),
             turn_exit_deg=self._float_parameter("turn_exit_deg"),
+            turn_min_heading_deg=self._float_parameter(
+                "turn_min_heading_deg"
+            ),
             direction_confirmation_frames=int(
                 self.get_parameter("direction_confirmation_frames").value
             ),
