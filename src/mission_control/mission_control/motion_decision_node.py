@@ -40,6 +40,8 @@ class MotionDecisionNode(Node):
         self.declare_parameter("hurdle_timeout_sec", 0.50)
         self.declare_parameter("enable_ball_lost_recovery", False)
         self.declare_parameter("recovery_heading_turn_deg", 15.0)
+        self.declare_parameter("recovery_parallel_heading_deg", 5.0)
+        self.declare_parameter("perspective_offset_gain_deg", 42.0)
         self.declare_parameter("ball_tracking_range_m", 1.5)
         self.declare_parameter("ball_control_range_m", 0.9)
         self.declare_parameter("ball_lost_stop_sec", 0.35)
@@ -62,6 +64,12 @@ class MotionDecisionNode(Node):
             MotionDecisionConfig(
                 recovery_heading_turn_deg=self._float_parameter(
                     "recovery_heading_turn_deg"
+                ),
+                recovery_parallel_heading_deg=self._float_parameter(
+                    "recovery_parallel_heading_deg"
+                ),
+                perspective_offset_gain_deg=self._float_parameter(
+                    "perspective_offset_gain_deg"
                 ),
                 enable_ball_lost_recovery=bool(
                     self.get_parameter(

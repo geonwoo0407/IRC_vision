@@ -24,6 +24,12 @@ def generate_launch_description() -> LaunchDescription:
     recovery_heading_turn_deg = LaunchConfiguration(
         "recovery_heading_turn_deg"
     )
+    recovery_parallel_heading_deg = LaunchConfiguration(
+        "recovery_parallel_heading_deg"
+    )
+    perspective_offset_gain_deg = LaunchConfiguration(
+        "perspective_offset_gain_deg"
+    )
     robot_center_offset_px = LaunchConfiguration(
         "robot_center_offset_px"
     )
@@ -88,6 +94,14 @@ def generate_launch_description() -> LaunchDescription:
                     recovery_heading_turn_deg,
                     value_type=float,
                 ),
+                "recovery_parallel_heading_deg": ParameterValue(
+                    recovery_parallel_heading_deg,
+                    value_type=float,
+                ),
+                "perspective_offset_gain_deg": ParameterValue(
+                    perspective_offset_gain_deg,
+                    value_type=float,
+                ),
             }
         ],
     )
@@ -128,6 +142,16 @@ def generate_launch_description() -> LaunchDescription:
                 "recovery_heading_turn_deg",
                 default_value="15.0",
                 description="Heading deadband before numbered recovery turns.",
+            ),
+            DeclareLaunchArgument(
+                "recovery_parallel_heading_deg",
+                default_value="5.0",
+                description="Straight tolerance after perspective correction.",
+            ),
+            DeclareLaunchArgument(
+                "perspective_offset_gain_deg",
+                default_value="42.0",
+                description="Perspective heading correction per offset norm.",
             ),
             DeclareLaunchArgument(
                 "robot_center_offset_px",

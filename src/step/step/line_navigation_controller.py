@@ -31,7 +31,8 @@ class LineNavigationController(Node):
         self.declare_parameter("recovery_turn_speed_rad_s", 0.22)
         self.declare_parameter("recovery_heading_turn_deg", 15.0)
         self.declare_parameter("recovery_straight_offset_norm", 0.45)
-        self.declare_parameter("recovery_parallel_heading_deg", 2.0)
+        self.declare_parameter("recovery_parallel_heading_deg", 5.0)
+        self.declare_parameter("perspective_offset_gain_deg", 42.0)
         self.declare_parameter("max_angular_speed_rad_s", 0.60)
         self.declare_parameter("max_angular_accel_rad_s2", 1.20)
         self.declare_parameter("heading_gain", 1.0)
@@ -71,6 +72,9 @@ class LineNavigationController(Node):
             ),
             recovery_parallel_heading_deg=self._float_parameter(
                 "recovery_parallel_heading_deg"
+            ),
+            perspective_offset_gain_deg=self._float_parameter(
+                "perspective_offset_gain_deg"
             ),
             max_angular_speed_rad_s=self._float_parameter(
                 "max_angular_speed_rad_s"

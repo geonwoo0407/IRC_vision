@@ -1542,6 +1542,13 @@ class Yolo26Detector(Node):
             if decision is not None
             else "WAIT"
         )
+        source_command = (
+            decision.get("source_command", {})
+            if decision is not None
+            else {}
+        )
+        if not isinstance(source_command, dict):
+            source_command = {}
         detected = bool(info and info.get("detected", False))
         if not detected or info is None:
             rows = [
@@ -1559,6 +1566,10 @@ class Yolo26Detector(Node):
             turn = self._number(info, "turn_angle_deg")
             if turn is None:
                 turn = self._number(info, "path_turn_delta_deg")
+            corrected_heading = self._number(
+                source_command,
+                "perspective_compensated_heading_deg",
+            )
             qualities = [
                 self._number(info, "heading_quality"),
                 self._number(info, "geometry_quality"),
@@ -1574,6 +1585,13 @@ class Yolo26Detector(Node):
                 "State       : TRACKING",
                 "Heading     : "
                 + self._metric_text(heading, "deg", 1, signed=True),
+                "Heading corr: "
+                + self._metric_text(
+                    corrected_heading,
+                    "deg",
+                    1,
+                    signed=True,
+                ),
                 "Offset norm : "
                 + self._metric_text(offset, "", 3, signed=True),
                 "Curve turn : "
