@@ -1117,9 +1117,14 @@ class LinePathVisualizer(Node):
     ) -> None:
         """Draw only final command and the inputs that produced it."""
         if command is None:
+            nearest_distance = self._format_number(
+                data.get("nearest_line_horizontal_distance_m"),
+                3,
+            )
             lines = [
                 "NAVIGATION : WAITING",
                 "Start line_navigation_controller",
+                f"NEAREST LINE: {nearest_distance} m",
                 f"LINE POINTS: {data.get('line_count', 0)}",
             ]
             self._draw_text_panel(frame, lines, (180, 180, 180))
@@ -1162,6 +1167,10 @@ class LinePathVisualizer(Node):
             1,
         )
         quality = self._format_number(command.get("line_quality"), 2)
+        nearest_distance = self._format_number(
+            data.get("nearest_line_horizontal_distance_m"),
+            3,
+        )
 
         if motion.startswith("RECOVER_"):
             lines = [
@@ -1172,6 +1181,7 @@ class LinePathVisualizer(Node):
                 "CURVE PREVIEW DISABLED DURING RECOVERY",
                 "QUALITY "
                 f"{quality}  |  LINE POINTS {data.get('line_count', 0)}",
+                f"NEAREST LINE: {nearest_distance} m",
             ]
         else:
             lines = [
@@ -1184,6 +1194,7 @@ class LinePathVisualizer(Node):
                 f"+ CURVE {preview_part}",
                 "QUALITY "
                 f"{quality}  |  LINE POINTS {data.get('line_count', 0)}",
+                f"NEAREST LINE: {nearest_distance} m",
             ]
 
         if self.show_all_metrics:

@@ -52,8 +52,10 @@ from typing import Any
 
 import numpy as np
 import rclpy
+from cv_bridge import CvBridge
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 
 from .temporal_confirmation import TemporalConfirmationFilter
@@ -169,9 +171,23 @@ class YoloLineAnalyzer(Node):
         )
 
         self.declare_parameter(
+            "depth_topic",
+            "/camera/aligned_depth_to_color/image_raw",
+        )
+
+        self.declare_parameter(
+            "camera_info_topic",
+            "/camera/color/camera_info",
+        )
+
+        self.declare_parameter(
             "output_topic",
             "/vision/line_info",
         )
+
+        self.declare_parameter("depth_timeout_sec", 0.7)
+        self.declare_parameter("depth_window_px", 9)
+        self.declare_parameter("max_valid_depth_m", 4.0)
 
         # ====================================================
         # Detection filtering
@@ -669,6 +685,26 @@ class YoloLineAnalyzer(Node):
         self.image_width = 1280
         self.image_height = 720
 
+        self.bridge = CvBridge()
+        self.latest_depth_image: np.ndarray | None = None
+        self.latest_depth_time: float | None = None
+        self.fx: float | None = None
+        self.cx: float | None = None
+        self.depth_timeout_sec = max(
+            0.0,
+            float(self.get_parameter("depth_timeout_sec").value),
+        )
+        self.depth_window_px = max(
+            3,
+            int(self.get_parameter("depth_window_px").value),
+        )
+        if self.depth_window_px % 2 == 0:
+            self.depth_window_px += 1
+        self.max_valid_depth_m = max(
+            0.05,
+            float(self.get_parameter("max_valid_depth_m").value),
+        )
+
         # ====================================================
         # Temporal filter state
         # ====================================================
@@ -700,6 +736,11 @@ class YoloLineAnalyzer(Node):
             self.get_parameter(
                 "image_topic"
             ).value
+        )
+
+        depth_topic = str(self.get_parameter("depth_topic").value)
+        camera_info_topic = str(
+            self.get_parameter("camera_info_topic").value
         )
 
         output_topic = str(
@@ -736,6 +777,20 @@ class YoloLineAnalyzer(Node):
             )
         )
 
+        self.depth_subscription = self.create_subscription(
+            Image,
+            depth_topic,
+            self._depth_callback,
+            qos_profile_sensor_data,
+        )
+
+        self.camera_info_subscription = self.create_subscription(
+            CameraInfo,
+            camera_info_topic,
+            self._camera_info_callback,
+            10,
+        )
+
         # ====================================================
         # Startup log
         # ====================================================
@@ -746,6 +801,12 @@ class YoloLineAnalyzer(Node):
 
         self.get_logger().info(
             f"Subscribing image info: {image_topic}"
+        )
+
+        self.get_logger().info(f"Subscribing aligned depth: {depth_topic}")
+
+        self.get_logger().info(
+            f"Subscribing camera info: {camera_info_topic}"
         )
 
         self.get_logger().info(
@@ -778,6 +839,90 @@ class YoloLineAnalyzer(Node):
             self.image_height = int(
                 message.height
             )
+
+    def _camera_info_callback(self, message: CameraInfo) -> None:
+        """Store color-camera intrinsics for horizontal distance."""
+        if len(message.k) < 6:
+            return
+        fx = float(message.k[0])
+        if fx <= 0.0:
+            return
+        self.fx = fx
+        self.cx = float(message.k[2])
+
+    def _depth_callback(self, message: Image) -> None:
+        """Store the latest depth image aligned to the color frame."""
+        try:
+            depth = self.bridge.imgmsg_to_cv2(
+                message,
+                desired_encoding="passthrough",
+            )
+            self.latest_depth_image = np.asarray(depth)
+            self.latest_depth_time = time.monotonic()
+        except Exception as exc:
+            self.get_logger().warning(f"Could not read depth image: {exc}")
+
+    def _nearest_line_distance(
+        self,
+        point: LinePoint,
+    ) -> dict[str, Any]:
+        """Measure ground-plane distance to the nearest line point."""
+        empty = {
+            "nearest_line_point_px": [
+                int(round(point.x)),
+                int(round(point.y)),
+            ],
+            "nearest_line_depth_m": None,
+            "nearest_line_lateral_offset_m": None,
+            "nearest_line_horizontal_distance_m": None,
+            "nearest_line_depth_valid": False,
+        }
+        if (
+            self.latest_depth_image is None
+            or self.latest_depth_time is None
+            or time.monotonic() - self.latest_depth_time
+            > self.depth_timeout_sec
+            or self.fx is None
+            or self.cx is None
+        ):
+            return empty
+
+        depth_image = self.latest_depth_image
+        if depth_image.ndim != 2:
+            return empty
+        height, width = depth_image.shape[:2]
+        x = int(round(point.x))
+        y = int(round(point.y))
+        if not (0 <= x < width and 0 <= y < height):
+            return empty
+
+        radius = self.depth_window_px // 2
+        crop = depth_image[
+            max(0, y - radius):min(height, y + radius + 1),
+            max(0, x - radius):min(width, x + radius + 1),
+        ]
+        if crop.dtype == np.uint16:
+            crop_m = crop.astype(np.float32) * 0.001
+        else:
+            crop_m = crop.astype(np.float32)
+        valid = crop_m[
+            np.isfinite(crop_m)
+            & (crop_m > 0.05)
+            & (crop_m <= self.max_valid_depth_m)
+        ]
+        if valid.size == 0:
+            return empty
+
+        depth_m = float(np.median(valid))
+        lateral_m = (float(x) - self.cx) * depth_m / self.fx
+        horizontal_m = math.hypot(depth_m, lateral_m)
+        return {
+            **empty,
+            "nearest_line_depth_m": round(depth_m, 4),
+            "nearest_line_lateral_offset_m": round(lateral_m, 4),
+            "nearest_line_horizontal_distance_m": round(horizontal_m, 4),
+            "nearest_line_depth_valid": True,
+        }
 
     def _detections_callback(
         self,
@@ -2442,6 +2587,21 @@ class YoloLineAnalyzer(Node):
             "center_points_px":
                 [],
 
+            "nearest_line_point_px":
+                None,
+
+            "nearest_line_depth_m":
+                None,
+
+            "nearest_line_lateral_offset_m":
+                None,
+
+            "nearest_line_horizontal_distance_m":
+                None,
+
+            "nearest_line_depth_valid":
+                False,
+
             "segment_angles_deg":
                 [],
 
@@ -2793,6 +2953,8 @@ class YoloLineAnalyzer(Node):
             )
         )
 
+        nearest_line_distance = self._nearest_line_distance(points[0])
+
         # ----------------------------------------------------
         # Return JSON-compatible result
         # ----------------------------------------------------
@@ -2820,6 +2982,8 @@ class YoloLineAnalyzer(Node):
                     ]
                     for point in points
                 ],
+
+            **nearest_line_distance,
 
             "segment_angles_deg":
                 segment_angles,
