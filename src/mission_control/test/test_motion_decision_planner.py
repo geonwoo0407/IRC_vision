@@ -177,8 +177,8 @@ def test_hurdle_outside_one_meter_is_ignored_for_line_tracking():
         )
 
     assert decision.source == "line"
-    assert decision.action == "STRAIGHT"
-    assert decision.reason == "straight_line_turn_suppressed"
+    assert decision.action == "RECOVER_RIGHT_TURN_RIGHT_1"
+    assert decision.reason == "line_center_recovery"
 
 
 def test_recovery_heading_deadband_is_configurable():

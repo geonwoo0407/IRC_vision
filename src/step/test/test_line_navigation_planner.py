@@ -55,7 +55,7 @@ def test_heading_sign_selects_turn_direction(heading, expected):
     assert command.motion == expected
 
 
-@pytest.mark.parametrize("heading", [-14.9, 0.0, 14.9])
+@pytest.mark.parametrize("heading", [-9.999, 0.0, 9.999])
 def test_wider_straight_deadband(heading):
     planner = LineNavigationPlanner()
 
@@ -255,6 +255,7 @@ def test_moderate_offset_heading_toward_line_stays_straight():
 @pytest.mark.parametrize(
     ("heading", "expected_level"),
     [
+        (10.0, 1),
         (15.0, 1),
         (22.499, 1),
         (22.5, 2),
@@ -310,7 +311,7 @@ def test_small_heading_and_centered_offset_stays_straight():
     assert command.motion == "STRAIGHT"
 
 
-def test_slanted_straight_line_does_not_emit_plain_right():
+def test_ten_degree_recovery_threshold_uses_numbered_turn_not_plain_right():
     planner = LineNavigationPlanner(
         NavigationConfig(direction_confirmation_frames=1)
     )
@@ -326,9 +327,9 @@ def test_slanted_straight_line_does_not_emit_plain_right():
         0.1,
     )
 
-    assert command.motion == "STRAIGHT"
-    assert command.reason == "straight_line_turn_suppressed"
-    assert command.angular_speed_rad_s == 0.0
+    assert command.motion == "RECOVER_RIGHT_TURN_RIGHT_1"
+    assert command.reason == "line_center_recovery"
+    assert command.angular_speed_rad_s > 0.0
 
 
 def test_real_right_curve_emits_plain_right_without_far_fit():

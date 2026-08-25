@@ -126,7 +126,7 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument(
                 "recovery_heading_turn_deg",
-                default_value="15.0",
+                default_value="10.0",
                 description="Heading deadband before numbered recovery turns.",
             ),
             DeclareLaunchArgument(

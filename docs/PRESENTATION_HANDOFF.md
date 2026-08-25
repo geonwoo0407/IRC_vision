@@ -93,7 +93,7 @@ steering_error
 + preview_gain × far_turn
 ```
 
-명령은 `STRAIGHT`, `LEFT`, `RIGHT`, `RECOVER_*_TURN_LEFT/RIGHT_[1-6]`, `STOP`입니다. 단독 `RECOVER_LEFT/RIGHT`는 사용하지 않으며 offset만 큰 경우에는 `STRAIGHT`를 유지합니다. 복귀 회전은 카메라 중심선 대비 근거리 line heading을 15도 단위의 여섯 모션으로 양자화합니다. quality가 낮거나 입력이 오래되면 STOP입니다.
+명령은 `STRAIGHT`, `LEFT`, `RIGHT`, `RECOVER_*_TURN_LEFT/RIGHT_[1-6]`, `STOP`입니다. 단독 `RECOVER_LEFT/RIGHT`는 사용하지 않으며 offset만 큰 경우에는 `STRAIGHT`를 유지합니다. 복귀 회전은 근거리 line heading 절댓값 `10도`부터 시작하고, 15도 단위의 여섯 모션으로 양자화합니다. quality가 낮거나 입력이 오래되면 STOP입니다.
 
 ### 화면
 
