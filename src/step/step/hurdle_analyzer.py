@@ -18,6 +18,8 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 
+from .approach_distance import approach_level_from_motion
+from .approach_distance import approach_motion_for_distance
 from .temporal_confirmation import depth_is_within_range
 from .temporal_confirmation import TemporalConfirmationFilter
 
@@ -92,6 +94,9 @@ class HurdleInfo:
     ground_gap_in_go_range: bool
     go_ground_gap_error_m: float | None
     go_now: bool
+    approach_motion: str
+    approach_level: int | None
+    approach_target_distance_m: float | None
     target_priority_score: float
     candidate_count: int
     candidates: list[HurdleCandidate]
@@ -684,6 +689,9 @@ class HurdleAnalyzer(Node):
             ground_gap_in_go_range=False,
             go_ground_gap_error_m=None,
             go_now=False,
+            approach_motion="STRAIGHT",
+            approach_level=None,
+            approach_target_distance_m=None,
             target_priority_score=0.0,
             candidate_count=0,
             candidates=[],
@@ -824,6 +832,13 @@ class HurdleAnalyzer(Node):
                     round(error, 3) if error is not None else None
                 ),
                 go_now=go_now,
+                approach_motion=approach_motion_for_distance(
+                    target.ground_gap_m
+                ),
+                approach_level=approach_level_from_motion(
+                    approach_motion_for_distance(target.ground_gap_m)
+                ),
+                approach_target_distance_m=target.ground_gap_m,
                 target_priority_score=target.score,
                 candidate_count=len(candidates),
                 candidates=candidates[:5],

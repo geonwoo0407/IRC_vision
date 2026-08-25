@@ -7,6 +7,9 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
+from .approach_distance import approach_level_from_motion
+from .approach_distance import approach_motion_for_distance
+
 
 RECOVERY_TURN_STEP_DEG = 15
 RECOVERY_TURN_MAX_LEVEL = 6
@@ -78,6 +81,7 @@ class NavigationCommand:
         recovery_side, turn_motion, turn_level, turn_angle_deg = (
             _recovery_motion_metadata(self.motion)
         )
+        approach_level = approach_level_from_motion(self.motion)
         return {
             "valid": self.valid,
             "motion": self.motion,
@@ -117,6 +121,16 @@ class NavigationCommand:
             ),
             "corner_straight_motion_count": (
                 self.corner_straight_motion_count
+            ),
+            "approach_motion": (
+                self.motion
+                if self.motion == "STRAIGHT" or approach_level is not None
+                else None
+            ),
+            "approach_level": approach_level,
+            "approach_target_distance_m": _round_optional(
+                self.corner_start_distance_m,
+                4,
             ),
             "recovery_side": recovery_side,
             "turn_motion": turn_motion,
@@ -297,7 +311,6 @@ class LineNavigationPlanner:
             corner_prepare
             and corner_direction is not None
             and corner_start_distance is not None
-            and corner_motion_count is not None
         )
 
         preview_turn = _number(line_info, "turn_angle_deg")
@@ -438,6 +451,7 @@ class LineNavigationPlanner:
             reason = "turn_confirmation_pending"
         if corner_prepare and motion == "STRAIGHT":
             reason = "corner_approach"
+            motion = approach_motion_for_distance(corner_start_distance)
         duration = self.config.command_duration_sec
 
         self.previous_motion = motion

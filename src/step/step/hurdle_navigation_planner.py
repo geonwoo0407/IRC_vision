@@ -7,6 +7,9 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
+from .approach_distance import approach_level_from_motion
+from .approach_distance import approach_motion_for_distance
+
 
 @dataclass(frozen=True)
 class HurdleNavigationConfig:
@@ -18,6 +21,7 @@ class HurdleNavigationConfig:
     go_ground_gap_tolerance_m: float = 0.10
     go_max_camera_bottom_gap_m: float = 0.05
     go_angle_tolerance_deg: float = 8.0
+    path_center_tolerance_norm: float = 0.10
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,7 @@ class HurdleActionCommand:
 
     def to_dict(self) -> dict[str, Any]:
         """Return a rounded JSON-compatible representation."""
+        approach_level = approach_level_from_motion(self.action)
         return {
             "valid": self.valid,
             "action": self.action,
@@ -65,6 +70,16 @@ class HurdleActionCommand:
             "is_parallel": self.is_parallel,
             "ground_gap_in_go_range": self.ground_gap_in_go_range,
             "go_now": self.go_now,
+            "approach_motion": (
+                self.action
+                if self.action == "STRAIGHT" or approach_level is not None
+                else None
+            ),
+            "approach_level": approach_level,
+            "approach_target_distance_m": _round_optional(
+                self.ground_gap_m,
+                3,
+            ),
         }
 
 
@@ -139,6 +154,15 @@ class HurdleNavigationPlanner:
         parallel = (
             abs(hurdle_angle) <= self.config.go_angle_tolerance_deg
         )
+        path_reference_valid = bool(
+            hurdle_info.get("path_reference_valid", False)
+        )
+        path_offset = _number(hurdle_info, "path_offset_x_norm")
+        path_centered = bool(
+            not path_reference_valid
+            or path_offset is None
+            or abs(path_offset) <= self.config.path_center_tolerance_norm
+        )
         ground_gap_error = (
             ground_gap - self.config.go_target_ground_gap_m
             if ground_gap is not None
@@ -154,7 +178,10 @@ class HurdleNavigationPlanner:
             <= self.config.go_max_camera_bottom_gap_m + 1e-9
         )
         ready_geometry = (
-            parallel and ground_gap_in_range and bottom_gap_in_range
+            parallel
+            and path_centered
+            and ground_gap_in_range
+            and bottom_gap_in_range
         )
         analyzer_go_now = hurdle_info.get("go_now")
         go_now = bool(
@@ -169,6 +196,13 @@ class HurdleNavigationPlanner:
         if go_now:
             action = "GO"
             reason = "hurdle_parallel_at_close_ground_gap"
+        elif (
+            path_reference_valid
+            and path_offset is not None
+            and not path_centered
+        ):
+            action = "TURN_RIGHT" if path_offset > 0.0 else "TURN_LEFT"
+            reason = "align_to_hurdle_line_intersection"
         elif not parallel:
             action = "ALIGN_LEFT" if hurdle_angle > 0.0 else "ALIGN_RIGHT"
             reason = "align_robot_parallel_to_hurdle"
@@ -179,8 +213,10 @@ class HurdleNavigationPlanner:
             ground_gap_error is not None
             and ground_gap_error > self.config.go_ground_gap_tolerance_m
         ):
-            action = "APPROACH_HURDLE"
-            reason = "hurdle_too_far"
+            action = approach_motion_for_distance(
+                ground_gap if ground_gap is not None else depth
+            )
+            reason = "hurdle_aligned_discrete_approach"
         else:
             action = "WAIT_GO_CONFIRMATION"
             reason = "waiting_for_stable_hurdle_condition"

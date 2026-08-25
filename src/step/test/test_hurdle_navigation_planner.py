@@ -83,10 +83,24 @@ def test_horizontal_offset_does_not_affect_hurdle_action():
     assert command.action == "GO"
 
 
+def test_line_intersection_offset_blocks_go_and_turns_to_route():
+    planner = HurdleNavigationPlanner()
+
+    command = planner.plan(
+        hurdle_info(
+            path_reference_valid=True,
+            path_offset_x_norm=0.2,
+        )
+    )
+
+    assert command.action == "TURN_RIGHT"
+    assert command.go_now is False
+
+
 @pytest.mark.parametrize(
     ("depth", "ground_gap", "expected"),
     [
-        (0.74, 0.45, "APPROACH_HURDLE"),
+        (0.74, 0.45, "STRAIGHT_3"),
         (0.47, 0.05, "GO"),
     ],
 )
@@ -148,7 +162,7 @@ def test_impossible_pythagorean_geometry_never_becomes_false_zero_go():
         )
     )
 
-    assert far.action == "APPROACH_HURDLE"
+    assert far.action == "STRAIGHT_3"
     assert far.go_now is False
     assert close.action == "GO"
     assert close.go_now is True

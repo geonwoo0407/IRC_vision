@@ -33,6 +33,12 @@ def generate_launch_description() -> LaunchDescription:
     robot_center_offset_px = LaunchConfiguration(
         "robot_center_offset_px"
     )
+    camera_pitch_down_deg = LaunchConfiguration(
+        "camera_pitch_down_deg"
+    )
+    camera_forward_offset_m = LaunchConfiguration(
+        "camera_forward_offset_m"
+    )
     line_roi_x_min_ratio = LaunchConfiguration(
         "line_roi_x_min_ratio"
     )
@@ -41,6 +47,9 @@ def generate_launch_description() -> LaunchDescription:
     )
     corner_min_turn_delta_deg = LaunchConfiguration(
         "corner_min_turn_delta_deg"
+    )
+    corner_straight_max_turn_delta_deg = LaunchConfiguration(
+        "corner_straight_max_turn_delta_deg"
     )
     corner_straight_motion_distance_m = LaunchConfiguration(
         "corner_straight_motion_distance_m"
@@ -92,6 +101,14 @@ def generate_launch_description() -> LaunchDescription:
                     robot_center_offset_px,
                     value_type=float,
                 ),
+                "camera_pitch_down_deg": ParameterValue(
+                    camera_pitch_down_deg,
+                    value_type=float,
+                ),
+                "camera_forward_offset_m": ParameterValue(
+                    camera_forward_offset_m,
+                    value_type=float,
+                ),
                 "roi_x_min_ratio": ParameterValue(
                     line_roi_x_min_ratio,
                     value_type=float,
@@ -102,6 +119,10 @@ def generate_launch_description() -> LaunchDescription:
                 ),
                 "corner_min_turn_delta_deg": ParameterValue(
                     corner_min_turn_delta_deg,
+                    value_type=float,
+                ),
+                "corner_straight_max_turn_delta_deg": ParameterValue(
+                    corner_straight_max_turn_delta_deg,
                     value_type=float,
                 ),
                 "corner_straight_motion_distance_m": ParameterValue(
@@ -200,6 +221,18 @@ def generate_launch_description() -> LaunchDescription:
                 description="Robot center shift right from image midpoint.",
             ),
             DeclareLaunchArgument(
+                "camera_pitch_down_deg",
+                default_value="45.0",
+                description="Color camera downward pitch used for floor distance.",
+            ),
+            DeclareLaunchArgument(
+                "camera_forward_offset_m",
+                default_value="0.0",
+                description=(
+                    "Camera forward position from the robot distance origin."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "line_roi_x_min_ratio",
                 default_value="0.15",
                 description="Left image boundary used by the line analyzer.",
@@ -211,8 +244,13 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument(
                 "corner_min_turn_delta_deg",
-                default_value="45.0",
+                default_value="30.0",
                 description="Minimum path bend for a real corner preview.",
+            ),
+            DeclareLaunchArgument(
+                "corner_straight_max_turn_delta_deg",
+                default_value="15.0",
+                description="Maximum bend classified as definitely straight.",
             ),
             DeclareLaunchArgument(
                 "corner_straight_motion_distance_m",

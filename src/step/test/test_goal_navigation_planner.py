@@ -34,7 +34,8 @@ def test_centered_goal_at_50cm_approaches():
     command = planner.plan(goal_info(depth_m=0.50))
 
     assert command.valid is True
-    assert command.action == "APPROACH_GOAL"
+    assert command.action == "STRAIGHT_3"
+    assert command.to_dict()["approach_level"] == 3
 
 
 def test_centered_goal_at_25cm_requests_score_motion():
@@ -62,5 +63,5 @@ def test_misaligned_goal_at_25cm_aligns_before_scoring():
         goal_info(depth_m=0.25, offset_x_norm=-0.2)
     )
 
-    assert command.action == "ALIGN_LEFT"
+    assert command.action == "TURN_LEFT"
     assert command.sdk_motion_requested is False

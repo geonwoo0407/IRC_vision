@@ -484,7 +484,7 @@ mission_map_visualizer
 
 ```text
 valid                       명령 사용 가능 여부
-motion                      STOP / STRAIGHT / LEFT / RIGHT / RECOVER_*_TURN_*_[1-6]
+motion                      STOP / STRAIGHT[_0-5] / LEFT / RIGHT / RECOVER_*_TURN_*_[1-6]
 reason                      명령 또는 정지 이유
 linear_speed_mps             목표 선속도
 lateral_speed_mps            라인 복귀용 좌우 속도(+오른쪽, -왼쪽)
@@ -502,9 +502,15 @@ steering_error_deg           heading/offset/preview를 합친 조향 오차
 line_quality                 사용된 최소 line quality
 corner_prepare              실제 코너와 시작점 거리가 확정됐는지 여부
 corner_direction            미리 보이는 코너 방향(LEFT / RIGHT)
-corner_start_distance_m     코너 시작점까지의 RealSense 수평거리
+corner_start_distance_m     로봇 기준 코너 시작점까지의 바닥 전진거리
+corner_start_depth_m        코너점의 원본 RealSense optical Z 거리
+corner_preview_state        STRAIGHT / AMBIGUOUS / CORNER / UNKNOWN
+corner_preview_held         일시 누락을 0.3초 유지 중인지 여부
 corner_remaining_forward_m  회전 여유거리를 제외한 직진거리
 corner_straight_motion_count 코너 전 실행할 직진보행 모션 횟수
+approach_motion             거리 구간에 따른 STRAIGHT / STRAIGHT_0~5
+approach_level              거리 단계 0~5, 일반 STRAIGHT이면 null
+approach_target_distance_m  현재 기준점까지의 거리
 valid_for_sec                수신 측 watchdog 유효시간
 ```
 
@@ -514,9 +520,13 @@ valid_for_sec                수신 측 watchdog 유효시간
 
 일반 `LEFT/RIGHT` 명령은 heading이나 offset만으로는 발행하지 않습니다. 먼 경로의 turn angle 또는 구간별 signed path turn이 `8도` 이상이고 consistency가 `0.55` 이상이며 조향 방향과 일치할 때만 발행합니다. 따라서 기울어진 일자 라인은 일반 `RIGHT`가 아니라 `STRAIGHT` 또는 필요한 경우 `RECOVER_*`로 처리하고, 실제 우회전 곡선에서만 일반 `RIGHT`를 발행합니다.
 
-코너 사전 준비는 단순 heading과 분리되어 있습니다. 라인점이 6개 이상이고 near-to-far 경로 변화가 기본 `45도` 이상이며, 기준 직선에서 `12도` 이상 벗어나는 같은 방향 구간이 2개 이상 이어질 때 굽기 직전 점을 코너 시작점으로 선택합니다. 이 형상이 유효한 aligned depth와 함께 3프레임 연속 확인되어야 `corner_prepare=true`가 됩니다. 직선은 구간 각도가 거의 일정하므로 heading이 기울어도 코너 준비가 발생하지 않습니다.
+코너 사전 준비는 단순 heading과 분리되어 있습니다. 라인점은 최소 3개만 있으면 되고, near 첫 선분과 far 선분의 방향 차이가 `15도 이하`면 직선, `15~30도`면 이전 상태를 유지하는 애매 구간, `30도 이상`이면 코너 후보입니다. 코너 계산은 세로 간격이 아니라 점 사이 실제 길이를 사용하므로 거의 수평으로 뻗는 90도 회전 구간도 버리지 않습니다. 3점일 때는 가운데 점, 4점 이상일 때는 처음 기준 방향에서 15도 이상 벗어나는 선분의 시작점을 코너 시작점으로 사용합니다. 최근 5프레임 중 3프레임에서 같은 코너와 유효 depth가 확인되면 확정하고, 일시 누락은 최대 0.3초 유지합니다. 확실한 직선이나 반대 방향 코너가 나오면 즉시 기존 코너를 해제합니다.
 
-직진보행 횟수는 `floor((시작점 depth - 회전 여유거리) / 직진 1회 거리)`로 계산합니다. 기본은 직진 1회 `0.05m`, 회전 여유거리 `0.15m`이며 실제 로봇 보폭에 맞춰 반드시 조정해야 합니다. 수신 측에서는 같은 명령을 프레임마다 누적하지 말고 최신 `command_id`의 횟수로 교체해야 합니다.
+코너 거리 단계에는 기존 `sqrt(depth² + lateral²)`를 사용하지 않습니다. aligned depth와 color intrinsics로 카메라 X/Y/Z를 복원하고 기본 하향 pitch `45도`를 역회전한 뒤, `camera_forward_offset_m`을 더한 로봇 기준 바닥 전진거리를 사용합니다. 따라서 아래를 보는 카메라의 optical Z가 실제 전진거리보다 크게 표시되던 문제가 제거됩니다. 카메라가 로봇 거리 원점보다 앞에 설치되어 있으면 실제 장착 오프셋을 launch 인자로 설정해야 합니다.
+
+코너 시작점까지의 거리에는 모든 미션이 공유하는 실측 구간을 적용합니다. `0~0.130m=STRAIGHT_0`, `~0.263m=STRAIGHT_1`, `~0.427m=STRAIGHT_2`, `~0.564m=STRAIGHT_3`, `~0.680m=STRAIGHT_4`, `~0.780m=STRAIGHT_5`이며, 그보다 멀거나 기준점을 찾지 못하면 일반 `STRAIGHT`입니다. 이 번호가 실제 무보행·2/4/6/8/10걸음 중 무엇을 실행할지는 behavior/FSM이 결정합니다.
+
+실행 우선순위는 `진입 거리 안의 공/골대/허들 > 코너 기준점 접근 > 일반 라인`입니다. 따라서 라인 또는 코너 접근 중에도 공 `0.9m`, 골대 `0.5m`, 허들 `1.0m` 안의 확정 객체가 들어오면 해당 미션이 즉시 제어권을 가져갑니다. 객체 미션이 끝나 명시적으로 라인 단계로 전환된 뒤에는 일반 `LEFT/RIGHT`와 번호형 회전 명령을 다시 사용할 수 있습니다.
 
 ```bash
 ros2 run step line_navigation_controller --ros-args \
@@ -535,7 +545,10 @@ ros2 launch mission_control full_system.launch.py \
   curve_follow_max_offset_norm:=0.55 \
   line_roi_x_min_ratio:=0.15 \
   line_roi_x_max_ratio:=0.85 \
-  corner_min_turn_delta_deg:=45.0 \
+  camera_pitch_down_deg:=45.0 \
+  camera_forward_offset_m:=0.0 \
+  corner_straight_max_turn_delta_deg:=15.0 \
+  corner_min_turn_delta_deg:=30.0 \
   corner_straight_motion_distance_m:=0.05 \
   corner_turn_margin_m:=0.15
 ```
@@ -610,9 +623,9 @@ candidate_count
 ```text
 detect_depth_m        1.5m 이하이면 추적 대상으로 사용
 approach_depth_m      0.90m 이하이면 공 제어 전환 후보
-pickup_ready_depth_m  0.9m 이하 + 화면 중앙이면 집기 자세 준비
-pickup_now_depth_m    공 줍기 기준 depth 0.80m
-pickup_depth_tolerance_m depth 양방향 허용오차 ±0.05m
+pickup_ready_depth_m  0.15m 이하 + 화면 중앙이면 집기 자세 준비
+pickup_now_depth_m    공 줍기 기준 depth 0.07m
+pickup_depth_tolerance_m depth 양방향 허용오차 ±0.02m
 pickup_center_tolerance_norm 화면 중심 허용오차 ±0.08
 pickup_target_y_ratio 화면 위에서 아래로 0.82 지점
 pickup_y_tolerance_ratio 세로 목표 허용오차 ±0.12
@@ -620,7 +633,7 @@ horizontal_deadband_px 화면 중심 ±20px는 방향을 CENTER로 판단
 center_tolerance_px   화면 중심 ±140px 이내이면 중앙 정렬로 판단
 ```
 
-공이 보이더라도 `pickup_ready`는 가까운 depth와 화면 내부의 집기 목표 범위 조건이 맞아야만 `true`가 됩니다. 계산상 임시 목표점은 화면 가로 중앙, 화면 높이의 82% 지점이지만 일반 실행 화면에는 별도의 `PICKUP TARGET` 사각형을 표시하지 않습니다. `pickup_now`는 depth가 `0.80m ±0.05m`, 수평 오차가 `±0.08`, 세로 위치가 `0.82 ±0.12`에 모두 들어올 때만 `true`가 되고, 이때 `PICK UP BALL` 문구가 표시됩니다. 카메라 목 각도와 실제 집기 자세가 확정되면 세로 목표값은 반드시 실측 조정해야 합니다.
+공이 보이더라도 `pickup_ready`는 가까운 depth와 화면 내부의 집기 목표 범위 조건이 맞아야만 `true`가 됩니다. 계산상 임시 목표점은 화면 가로 중앙, 화면 높이의 82% 지점입니다. `pickup_now`는 depth가 `0.07m ±0.02m`, 수평 오차가 `±0.08`, 세로 위치가 `0.82 ±0.12`에 모두 들어올 때만 `true`가 됩니다. 7cm에서 공이 화면 밖으로 나가면 behavior/FSM이 카메라를 아래로 내린 뒤 다시 거리와 미세보행을 판단해야 합니다.
 
 다만 최종 모션 실행 여부는 이 노드가 아니라 mission/behavior 쪽에서 결정해야 합니다. 예를 들어 현재 미션이 `SCORE_GOAL_A`이면 `ball_info.pickup_ready`가 true여도 공줍기 명령을 무시하고, 현재 미션이 `PICK_BALL_A` 또는 `PICK_BALL_B`일 때만 공 모션을 허용하는 방식이 안전합니다.
 
@@ -641,9 +654,9 @@ ros2 run step ball_analyzer --ros-args \
 
 ```bash
 ros2 run step ball_analyzer --ros-args \
-  -p pickup_ready_depth_m:=0.9 \
-  -p pickup_now_depth_m:=0.8 \
-  -p pickup_depth_tolerance_m:=0.05 \
+  -p pickup_ready_depth_m:=0.15 \
+  -p pickup_now_depth_m:=0.07 \
+  -p pickup_depth_tolerance_m:=0.02 \
   -p pickup_center_tolerance_norm:=0.08 \
   -p pickup_target_y_ratio:=0.82 \
   -p pickup_y_tolerance_ratio:=0.12
@@ -668,8 +681,8 @@ ball_navigation_controller    timeout과 주기 발행 담당
 
 ```text
 valid                       명령 사용 가능 여부
-motion                      STOP / TURN_LEFT / TURN_RIGHT / APPROACH /
-                            SLOW_APPROACH / FINE_FORWARD_STEP / PICKUP_NOW
+motion                      STOP / TURN_LEFT / TURN_RIGHT /
+                            STRAIGHT / STRAIGHT_0~5 / PICKUP_NOW
 reason                      명령 또는 정지 이유
 linear_speed_mps             목표 전진속도
 lateral_speed_mps            현재 0.0, 향후 옆걸음 확장용
@@ -694,11 +707,11 @@ ros2 topic echo /navigation/ball_command
 ```
 
 기본 동작은 공이 0.90m 안으로 들어온 뒤에만 시작합니다. 공이 좌우로
-벗어나면 `TURN_LEFT/RIGHT`로 제자리 정렬하고, 정렬 후 `APPROACH`로
-직진하며, 1.0m 안쪽에서 감속합니다. 0.95m 안쪽에서는 연속 보행 대신
-`FINE_FORWARD_STEP` 잔발걸음 후보를 내고, 화면 목표 영역과
-`0.80m ±0.05m` 조건을 모두 만족하면 전진을 멈추고 `PICKUP_NOW`
-후보를 냅니다. 이 출력은 로봇을 직접 움직이지 않으며,
+벗어나면 `TURN_LEFT/RIGHT`로 제자리 정렬하고, 정렬 후 공의 Depth Z를
+공통 거리 구간에 넣어 `STRAIGHT` 또는 `STRAIGHT_0~5`를 냅니다.
+화면 목표 영역과 `0.07m ±0.02m` 조건을 모두 만족하면 전진을 멈추고
+`PICKUP_NOW` 후보를 냅니다. 잘못된 0.8m `pickup_now` 입력은 planner가
+다시 거리 검증하여 거부합니다. 이 출력은 로봇을 직접 움직이지 않으며,
 추후 behavior/FSM이 공 미션일 때만 선택해야 합니다. 매핑 및 위치추정
 코드와는 연결하지 않았습니다.
 
@@ -816,7 +829,7 @@ ros2 topic echo /navigation/goal_command
 
 ## 허들 분석과 넘기 준비 신호
 
-허들은 화면 중앙 위치를 정렬 기준으로 사용하지 않습니다. 가로로 긴 bbox의 좌우 depth 차이로 카메라와 허들의 평행 오차를 계산하고, 이 각도와 대표 depth만으로 접근 및 넘기 준비를 판단합니다.
+허들 bbox 중심은 가까워질수록 화면 밖으로 잘리므로 접근 정렬 기준으로 사용하지 않습니다. 가려지지 않은 라인점으로 경로를 연장한 뒤 라인과 허들 bbox 아랫면의 교차점을 허들 기준점으로 사용합니다. bbox 안의 라인점은 피팅에서 제외하며, 기준점 좌우 오차는 `TURN_LEFT/RIGHT`, 전진 거리는 `ground_gap_m` 기반 `STRAIGHT_0~5`로 전달합니다. 라인 형상은 HURDLE 내부 센서 정보일 뿐 line planner나 LINE 모드로 전환하지 않습니다.
 
 ```text
 /vision/detections + aligned depth + camera info
@@ -850,6 +863,7 @@ is_parallel
 ground_gap_in_go_range
 go_ground_gap_error_m
 go_now
+approach_motion, approach_level   ground_gap 기반 STRAIGHT 단계
 ```
 
 현재 임시 넘기 준비 조건은 다음과 같습니다.
@@ -864,7 +878,7 @@ go_max_camera_bottom_gap_m       0.05m
 go_angle_tolerance_deg           ±8.0°
 ```
 
-카메라–허들 3D 직선거리를 빗변, `camera_height_m - hurdle_reference_height_m`를 세로변으로 두고 피타고라스 정리로 `ground_gap_m`을 계산합니다. 빗변이 세로변보다 짧게 측정되는 불가능한 기하 상태는 절대 0m로 자르지 않고 `N/A`로 처리합니다. 이때도 잘못된 조기 `GO`를 막기 위해 화면 하단부터 허들 bbox 하단까지의 픽셀 간격을 `depth / fy` 비율로 실제 길이로 환산한 `camera_bottom_gap_m`이 반드시 0.05m 이하인지 함께 검사합니다. 허들이 카메라와 평행하고 거리 조건들이 모두 맞아야 `state=GO_READY`, `go_now=true`, planner의 `action=GO`가 됩니다. 평행하지 않으면 `ALIGN_LEFT/ALIGN_RIGHT`, 하단 간격 또는 바닥 간격이 크면 `APPROACH_HURDLE`, 필수 depth·하단 간격·좌우 각도를 계산할 수 없으면 `WAIT`를 사용합니다. 허들의 화면 좌우 위치는 이 판단에 영향을 주지 않습니다.
+카메라–허들 3D 직선거리를 빗변, `camera_height_m - hurdle_reference_height_m`를 세로변으로 두고 피타고라스 정리로 `ground_gap_m`을 계산합니다. 불가능한 기하는 `N/A`로 처리합니다. 허들 기준점이 좌우로 벗어나면 먼저 `TURN_LEFT/RIGHT`, 허들과 평행하지 않으면 `ALIGN_LEFT/RIGHT`, 정렬되고 아직 멀면 `STRAIGHT` 또는 `STRAIGHT_0~5`를 사용합니다. 거리와 평행 조건이 모두 맞아야 `GO`가 됩니다. 1m 안에서 허들이 확정되면 HURDLE 소스를 잠그며, 허들이나 라인이 잠깐 사라져도 LINE 명령으로 대체하지 않습니다. 교차점은 최대 0.5초만 유지하고 이후에는 HURDLE/WAIT로 안전 정지합니다.
 
 통합 `motion_decision_node`는 `GO` 조건이 여러 프레임 유지되더라도 `sdk_motion_requested=true`를 최초 진입 시 한 번만 발행합니다. 실제 모션 ID는 아직 정해지지 않아 `sdk_motion_id=null`입니다.
 
@@ -914,14 +928,12 @@ HurdleAnalyzer
 | `GOAL_SEARCH` | 0.50~1.0m backboard는 기억하면서 line 주행, 0.50m 안에서 goal planner 전환 |
 | `HURDLE_SEARCH` | 1.0m 안의 확정된 허들만 hurdle planner로 전환, 그 밖에서는 line 주행 |
 | `BALL_APPROACH`, `GOAL_APPROACH`, `HURDLE_APPROACH` | 해당 객체 planner에 집중 |
-| `LINE_TRACK` | line planner만 사용 |
+| `LINE_TRACK` | 기본은 line/corner planner, 단 공 0.90m·골대 0.50m·허들 1.0m 안의 미션 객체가 들어오면 즉시 객체 planner로 전환 |
 | `PICK_LOCK`, `SHOOT_LOCK`, `HURDLE_LOCK` | C++ SDK 모션이 끝날 때까지 `WAIT`; 새 이동 판단 차단 |
 
-1.0m 안에서 확정된 허들이 보이면 화면 중앙 여부와 관계없이 공·골대보다 hurdle
-planner를 먼저 선택합니다. 허들을 화면 중앙으로 옮기는 대신 좌우 depth
-차이로 계산한 `hurdle_angle_deg`가 허용 범위에 들도록 제자리 회전하고,
-그 다음 depth를 맞춥니다. SDK 모션이 이미 실행 중인 `*_LOCK` 상태는
-이 우선순위보다 먼저 적용됩니다.
+1.0m 안에서 확정된 허들이 보이면 공·골대·라인보다 hurdle planner를 먼저 선택하고 HURDLE 상태를 잠급니다. 라인점은 허들 교차 기준점 계산에만 사용합니다. 허들 bbox 중심이나 line planner 명령은 사용하지 않으며, `GO` 이후 SDK 완료와 다음 명시적 미션 단계가 확인될 때만 잠금을 해제합니다.
+
+공은 0.90m, 골대는 0.50m 제어 범위에 들어오면 각각 BALL/GOAL 상태를 잠급니다. 잠금 뒤 객체가 잠깐 사라져도 line planner로 되돌아가지 않고 해당 미션의 STOP/WAIT 또는 재탐색만 사용합니다. `PICKUP_NOW`/`SHOT` 완료 뒤 다음 미션 단계가 명시적으로 들어와야 잠금을 해제합니다.
 
 모든 입력은 기본 0.5초 timeout을 사용합니다. 오래된 정보는 선택 대상에서 제외하므로 멈춘 analyzer의 마지막 검출값으로 계속 움직이는 것을 방지합니다.
 

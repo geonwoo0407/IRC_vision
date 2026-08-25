@@ -58,6 +58,8 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 
+from .approach_distance import approach_level_from_motion
+from .approach_distance import approach_motion_for_distance
 from .temporal_confirmation import TemporalConfirmationFilter
 
 
@@ -126,6 +128,34 @@ def calibrated_robot_center_x(
         return 0.0
     center_x = image_width / 2.0 + center_offset_px
     return float(np.clip(center_x, 0.0, image_width - 1.0))
+
+
+def ground_forward_distance_from_depth(
+    *,
+    x_px: float,
+    y_px: float,
+    depth_m: float,
+    fx: float,
+    fy: float,
+    cx: float,
+    cy: float,
+    camera_pitch_down_deg: float,
+    camera_forward_offset_m: float = 0.0,
+) -> tuple[float, float]:
+    """Project aligned depth into robot lateral and floor-forward metres."""
+    lateral_m = (float(x_px) - float(cx)) * float(depth_m) / float(fx)
+    camera_down_m = (
+        (float(y_px) - float(cy)) * float(depth_m) / float(fy)
+    )
+    pitch_rad = math.radians(float(camera_pitch_down_deg))
+    forward_from_camera_m = (
+        float(depth_m) * math.cos(pitch_rad)
+        - camera_down_m * math.sin(pitch_rad)
+    )
+    forward_from_robot_m = (
+        forward_from_camera_m + float(camera_forward_offset_m)
+    )
+    return lateral_m, max(0.0, forward_from_robot_m)
 
 
 # ============================================================
@@ -200,6 +230,8 @@ class YoloLineAnalyzer(Node):
         self.declare_parameter("depth_window_px", 9)
         self.declare_parameter("max_valid_depth_m", 4.0)
         self.declare_parameter("robot_center_offset_px", 70.0)
+        self.declare_parameter("camera_pitch_down_deg", 45.0)
+        self.declare_parameter("camera_forward_offset_m", 0.0)
 
         # ====================================================
         # Detection filtering
@@ -392,12 +424,17 @@ class YoloLineAnalyzer(Node):
         # Confirmed corner preview
         # ====================================================
 
-        self.declare_parameter("corner_min_points", 6)
-        self.declare_parameter("corner_min_turn_delta_deg", 45.0)
-        self.declare_parameter("corner_onset_deviation_deg", 12.0)
-        self.declare_parameter("corner_min_consistent_segments", 2)
+        self.declare_parameter("corner_min_points", 3)
+        self.declare_parameter("corner_min_segment_length_px", 20.0)
+        self.declare_parameter("corner_straight_max_turn_delta_deg", 15.0)
+        self.declare_parameter("corner_min_turn_delta_deg", 30.0)
+        self.declare_parameter("corner_onset_deviation_deg", 15.0)
+        self.declare_parameter("corner_min_consistent_segments", 1)
         self.declare_parameter("corner_min_consistency", 0.75)
-        self.declare_parameter("corner_confirmation_frames", 3)
+        self.declare_parameter("corner_confirmation_window_size", 5)
+        self.declare_parameter("corner_confirmation_required_hits", 3)
+        self.declare_parameter("corner_hold_sec", 0.30)
+        self.declare_parameter("corner_distance_filter_size", 5)
         self.declare_parameter("corner_straight_motion_distance_m", 0.05)
         self.declare_parameter("corner_turn_margin_m", 0.15)
 
@@ -645,6 +682,20 @@ class YoloLineAnalyzer(Node):
             3,
             int(self.get_parameter("corner_min_points").value),
         )
+        self.corner_min_segment_length_px = max(
+            1.0,
+            float(
+                self.get_parameter("corner_min_segment_length_px").value
+            ),
+        )
+        self.corner_straight_max_turn_delta_deg = max(
+            0.0,
+            float(
+                self.get_parameter(
+                    "corner_straight_max_turn_delta_deg"
+                ).value
+            ),
+        )
         self.corner_min_turn_delta_deg = max(
             0.0,
             float(self.get_parameter("corner_min_turn_delta_deg").value),
@@ -743,19 +794,42 @@ class YoloLineAnalyzer(Node):
             ),
             spatial_matching=False,
         )
-        corner_confirmation_frames = max(
+        corner_confirmation_window_size = max(
             1,
             int(
-                self.get_parameter("corner_confirmation_frames").value
+                self.get_parameter(
+                    "corner_confirmation_window_size"
+                ).value
+            ),
+        )
+        corner_confirmation_required_hits = max(
+            1,
+            int(
+                self.get_parameter(
+                    "corner_confirmation_required_hits"
+                ).value
             ),
         )
         self.corner_confirmation_filter = TemporalConfirmationFilter(
-            window_size=corner_confirmation_frames,
-            required_hits=corner_confirmation_frames,
-            max_missed_frames=1,
+            window_size=corner_confirmation_window_size,
+            required_hits=corner_confirmation_required_hits,
+            max_missed_frames=corner_confirmation_window_size,
             spatial_matching=False,
         )
+        self.corner_hold_sec = max(
+            0.0,
+            float(self.get_parameter("corner_hold_sec").value),
+        )
+        corner_distance_filter_size = max(
+            1,
+            int(self.get_parameter("corner_distance_filter_size").value),
+        )
         self.corner_candidate_direction: str | None = None
+        self.corner_distance_history: deque[float] = deque(
+            maxlen=corner_distance_filter_size
+        )
+        self.last_confirmed_corner: dict[str, Any] | None = None
+        self.last_confirmed_corner_time: float | None = None
 
         # ====================================================
         # Camera resolution
@@ -772,7 +846,9 @@ class YoloLineAnalyzer(Node):
         self.latest_depth_image: np.ndarray | None = None
         self.latest_depth_time: float | None = None
         self.fx: float | None = None
+        self.fy: float | None = None
         self.cx: float | None = None
+        self.cy: float | None = None
         self.depth_timeout_sec = max(
             0.0,
             float(self.get_parameter("depth_timeout_sec").value),
@@ -786,6 +862,12 @@ class YoloLineAnalyzer(Node):
         self.max_valid_depth_m = max(
             0.05,
             float(self.get_parameter("max_valid_depth_m").value),
+        )
+        self.camera_pitch_down_deg = float(
+            self.get_parameter("camera_pitch_down_deg").value
+        )
+        self.camera_forward_offset_m = float(
+            self.get_parameter("camera_forward_offset_m").value
         )
 
         # ====================================================
@@ -929,14 +1011,17 @@ class YoloLineAnalyzer(Node):
             )
 
     def _camera_info_callback(self, message: CameraInfo) -> None:
-        """Store color-camera intrinsics for horizontal distance."""
+        """Store color-camera intrinsics for floor-forward projection."""
         if len(message.k) < 6:
             return
         fx = float(message.k[0])
-        if fx <= 0.0:
+        fy = float(message.k[4])
+        if fx <= 0.0 or fy <= 0.0:
             return
         self.fx = fx
+        self.fy = fy
         self.cx = float(message.k[2])
+        self.cy = float(message.k[5])
 
     def _depth_callback(self, message: Image) -> None:
         """Store the latest depth image aligned to the color frame."""
@@ -962,6 +1047,7 @@ class YoloLineAnalyzer(Node):
             ],
             "depth_m": None,
             "lateral_offset_m": None,
+            "ground_forward_distance_m": None,
             "horizontal_distance_m": None,
             "depth_valid": False,
         }
@@ -971,7 +1057,9 @@ class YoloLineAnalyzer(Node):
             or time.monotonic() - self.latest_depth_time
             > self.depth_timeout_sec
             or self.fx is None
+            or self.fy is None
             or self.cx is None
+            or self.cy is None
         ):
             return empty
 
@@ -1002,13 +1090,25 @@ class YoloLineAnalyzer(Node):
             return empty
 
         depth_m = float(np.median(valid))
-        lateral_m = (float(x) - self.cx) * depth_m / self.fx
-        horizontal_m = math.hypot(depth_m, lateral_m)
+        lateral_m, ground_forward_m = ground_forward_distance_from_depth(
+            x_px=float(x),
+            y_px=float(y),
+            depth_m=depth_m,
+            fx=self.fx,
+            fy=self.fy,
+            cx=self.cx,
+            cy=self.cy,
+            camera_pitch_down_deg=self.camera_pitch_down_deg,
+            camera_forward_offset_m=self.camera_forward_offset_m,
+        )
         return {
             **empty,
             "depth_m": round(depth_m, 4),
             "lateral_offset_m": round(lateral_m, 4),
-            "horizontal_distance_m": round(horizontal_m, 4),
+            "ground_forward_distance_m": round(ground_forward_m, 4),
+            # Backward-compatible alias.  It now means robot-frame floor
+            # forward distance rather than camera X-Z slant distance.
+            "horizontal_distance_m": round(ground_forward_m, 4),
             "depth_valid": True,
         }
 
@@ -1024,6 +1124,9 @@ class YoloLineAnalyzer(Node):
             "nearest_line_lateral_offset_m": measured[
                 "lateral_offset_m"
             ],
+            "nearest_line_ground_forward_distance_m": measured[
+                "ground_forward_distance_m"
+            ],
             "nearest_line_horizontal_distance_m": measured[
                 "horizontal_distance_m"
             ],
@@ -1035,25 +1138,53 @@ class YoloLineAnalyzer(Node):
         points: list[LinePoint],
     ) -> dict[str, Any]:
         """Confirm a real corner and estimate straight motions to its onset."""
+        now = time.monotonic()
         geometry = self._detect_corner_start_geometry(
             points,
             min_points=self.corner_min_points,
-            min_segment_dy_px=self.min_segment_dy_px,
+            min_segment_length_px=self.corner_min_segment_length_px,
+            straight_max_turn_delta_deg=(
+                self.corner_straight_max_turn_delta_deg
+            ),
             min_turn_delta_deg=self.corner_min_turn_delta_deg,
             onset_deviation_deg=self.corner_onset_deviation_deg,
             min_consistent_segments=self.corner_min_consistent_segments,
             min_consistency=self.corner_min_consistency,
         )
+        state = str(geometry.get("state", "UNKNOWN"))
         direction = geometry["direction"]
         start_point = geometry["start_point"]
-        if direction != self.corner_candidate_direction:
+
+        if not hasattr(self, "corner_distance_history"):
+            self.corner_distance_history = deque(maxlen=5)
+        if not hasattr(self, "last_confirmed_corner"):
+            self.last_confirmed_corner = None
+            self.last_confirmed_corner_time = None
+        if not hasattr(self, "corner_hold_sec"):
+            self.corner_hold_sec = 0.30
+
+        if state == "STRAIGHT":
             self.corner_confirmation_filter.reset()
+            self.corner_candidate_direction = None
+            self.corner_distance_history.clear()
+            self.last_confirmed_corner = None
+            self.last_confirmed_corner_time = None
+        elif direction is not None:
+            if (
+                self.corner_candidate_direction is not None
+                and direction != self.corner_candidate_direction
+            ):
+                self.corner_confirmation_filter.reset()
+                self.corner_distance_history.clear()
+                self.last_confirmed_corner = None
+                self.last_confirmed_corner_time = None
             self.corner_candidate_direction = direction
 
         measured = {
             "point_px": None,
             "depth_m": None,
             "lateral_offset_m": None,
+            "ground_forward_distance_m": None,
             "horizontal_distance_m": None,
             "depth_valid": False,
         }
@@ -1064,16 +1195,67 @@ class YoloLineAnalyzer(Node):
             geometry["detected"]
             and measured["depth_valid"]
         )
+        measured_distance = measured["horizontal_distance_m"]
+        if raw_ready and isinstance(measured_distance, (int, float)):
+            self.corner_distance_history.append(float(measured_distance))
         confirmation = self.corner_confirmation_filter.update(raw_ready)
         confirmed = confirmation.confirmed
+        held = False
+        hold_age_sec: float | None = None
+        effective_geometry = geometry
+        effective_measured = measured
+
+        if confirmed:
+            if self.corner_distance_history:
+                filtered_distance = float(
+                    np.median(list(self.corner_distance_history))
+                )
+                effective_measured = dict(measured)
+                effective_measured["ground_forward_distance_m"] = round(
+                    filtered_distance,
+                    4,
+                )
+                effective_measured["horizontal_distance_m"] = round(
+                    filtered_distance,
+                    4,
+                )
+            self.last_confirmed_corner = {
+                "geometry": dict(geometry),
+                "measured": dict(effective_measured),
+            }
+            self.last_confirmed_corner_time = now
+        elif (
+            state != "STRAIGHT"
+            and self.last_confirmed_corner is not None
+            and self.last_confirmed_corner_time is not None
+            and (
+                direction is None
+                or direction
+                == self.last_confirmed_corner["geometry"].get("direction")
+            )
+        ):
+            hold_age_sec = max(0.0, now - self.last_confirmed_corner_time)
+            if hold_age_sec <= self.corner_hold_sec:
+                held = True
+                confirmed = True
+                effective_geometry = dict(
+                    self.last_confirmed_corner["geometry"]
+                )
+                effective_measured = dict(
+                    self.last_confirmed_corner["measured"]
+                )
+            else:
+                self.last_confirmed_corner = None
+                self.last_confirmed_corner_time = None
 
         straight_motion_count: int | None = None
         remaining_forward_m: float | None = None
-        depth_m = measured["depth_m"]
-        if confirmed and isinstance(depth_m, (int, float)):
+        depth_m = effective_measured["depth_m"]
+        ground_forward_m = effective_measured["horizontal_distance_m"]
+        if confirmed and isinstance(ground_forward_m, (int, float)):
             remaining_forward_m = max(
                 0.0,
-                float(depth_m) - self.corner_turn_margin_m,
+                float(ground_forward_m) - self.corner_turn_margin_m,
             )
             straight_motion_count = int(
                 math.floor(
@@ -1082,28 +1264,51 @@ class YoloLineAnalyzer(Node):
                 )
             )
 
+        corner_approach_motion = (
+            approach_motion_for_distance(ground_forward_m)
+            if confirmed
+            else None
+        )
+        corner_approach_level = (
+            approach_level_from_motion(corner_approach_motion)
+            if corner_approach_motion is not None
+            else None
+        )
+
         return {
             "corner_preview_raw_detected": bool(geometry["detected"]),
             "corner_preview_confirmed": confirmed,
-            "corner_direction": direction if confirmed else None,
-            "corner_start_index": geometry["start_index"],
-            "corner_start_point_px": measured["point_px"],
+            "corner_preview_state": state,
+            "corner_preview_held": held,
+            "corner_hold_age_sec": (
+                round(hold_age_sec, 3)
+                if held and hold_age_sec is not None
+                else None
+            ),
+            "corner_direction": (
+                effective_geometry["direction"] if confirmed else None
+            ),
+            "corner_start_index": effective_geometry["start_index"],
+            "corner_start_point_px": effective_measured["point_px"],
             "corner_start_depth_m": depth_m,
-            "corner_start_lateral_offset_m": measured[
+            "corner_start_lateral_offset_m": effective_measured[
                 "lateral_offset_m"
             ],
-            "corner_start_distance_m": measured[
-                "horizontal_distance_m"
-            ],
-            "corner_start_depth_valid": bool(measured["depth_valid"]),
-            "corner_turn_delta_deg": geometry["turn_delta_deg"],
-            "corner_turn_consistency": geometry["consistency"],
+            "corner_start_ground_forward_distance_m": ground_forward_m,
+            "corner_start_distance_m": ground_forward_m,
+            "corner_start_depth_valid": bool(
+                effective_measured["depth_valid"]
+            ),
+            "corner_turn_delta_deg": effective_geometry["turn_delta_deg"],
+            "corner_turn_consistency": effective_geometry["consistency"],
             "corner_remaining_forward_m": (
                 round(remaining_forward_m, 4)
                 if remaining_forward_m is not None
                 else None
             ),
             "corner_straight_motion_count": straight_motion_count,
+            "corner_approach_motion": corner_approach_motion,
+            "corner_approach_level": corner_approach_level,
             **confirmation.as_dict("corner_confirmation"),
         }
 
@@ -2487,15 +2692,17 @@ class YoloLineAnalyzer(Node):
         points: list[LinePoint],
         *,
         min_points: int,
-        min_segment_dy_px: float,
+        min_segment_length_px: float,
+        straight_max_turn_delta_deg: float,
         min_turn_delta_deg: float,
         onset_deviation_deg: float,
         min_consistent_segments: int,
         min_consistency: float,
     ) -> dict[str, Any]:
-        """Find where a straight near path first becomes a real corner."""
+        """Classify a 3+ point path and find its first bending point."""
         empty = {
             "detected": False,
+            "state": "UNKNOWN",
             "direction": None,
             "start_index": None,
             "start_point": None,
@@ -2510,34 +2717,43 @@ class YoloLineAnalyzer(Node):
             zip(points[:-1], points[1:])
         ):
             dy = near_point.y - far_point.y
-            if dy < min_segment_dy_px:
+            dx = far_point.x - near_point.x
+            if math.hypot(dx, dy) < min_segment_length_px:
                 continue
             angle = math.degrees(
-                math.atan2(far_point.x - near_point.x, dy)
+                math.atan2(dx, dy)
             )
             segments.append((index, angle))
 
-        required_segment_count = max(
-            3,
-            min_consistent_segments + 2,
-        )
-        if len(segments) < required_segment_count:
+        if len(segments) < 2:
             return empty
 
-        near_angles = [angle for _, angle in segments[:2]]
-        far_angles = [angle for _, angle in segments[-2:]]
-        baseline_angle = float(np.median(near_angles))
+        baseline_angle = float(segments[0][1])
+        far_sample_count = min(2, len(segments) - 1)
+        far_angles = [
+            angle for _, angle in segments[-far_sample_count:]
+        ]
         far_angle = float(np.median(far_angles))
-        turn_delta = far_angle - baseline_angle
+        turn_delta = (
+            (far_angle - baseline_angle + 180.0) % 360.0
+        ) - 180.0
+        if abs(turn_delta) <= straight_max_turn_delta_deg:
+            return {
+                **empty,
+                "state": "STRAIGHT",
+                "turn_delta_deg": turn_delta,
+                "consistency": 1.0,
+            }
         if abs(turn_delta) < min_turn_delta_deg:
             return {
                 **empty,
+                "state": "AMBIGUOUS",
                 "turn_delta_deg": turn_delta,
             }
 
         direction_sign = 1.0 if turn_delta > 0.0 else -1.0
         deviations = [
-            angle - baseline_angle
+            ((angle - baseline_angle + 180.0) % 360.0) - 180.0
             for _, angle in segments
         ]
         meaningful = [
@@ -2548,6 +2764,7 @@ class YoloLineAnalyzer(Node):
         if not meaningful:
             return {
                 **empty,
+                "state": "AMBIGUOUS",
                 "turn_delta_deg": turn_delta,
                 "consistency": 0.0,
             }
@@ -2560,12 +2777,13 @@ class YoloLineAnalyzer(Node):
         if consistency < min_consistency:
             return {
                 **empty,
+                "state": "AMBIGUOUS",
                 "turn_delta_deg": turn_delta,
                 "consistency": consistency,
             }
 
         for position in range(
-            0,
+            1,
             len(segments) - min_consistent_segments + 1,
         ):
             window = deviations[
@@ -2576,12 +2794,12 @@ class YoloLineAnalyzer(Node):
                 for deviation in window
             ):
                 continue
-            # Choose one point before the first confirmed bending segment.
-            # This corresponds to the visible turn-entry point rather than a
-            # point already deep inside the curve.
-            start_index = max(0, segments[position][0] - 1)
+            # The start of the first bending segment is the visible turn
+            # onset.  With exactly three points this is the middle point.
+            start_index = segments[position][0]
             return {
                 "detected": True,
+                "state": "CORNER",
                 "direction": "RIGHT" if direction_sign > 0.0 else "LEFT",
                 "start_index": start_index,
                 "start_point": points[start_index],
@@ -2591,6 +2809,7 @@ class YoloLineAnalyzer(Node):
 
         return {
             **empty,
+            "state": "AMBIGUOUS",
             "turn_delta_deg": turn_delta,
             "consistency": consistency,
         }
@@ -2923,6 +3142,9 @@ class YoloLineAnalyzer(Node):
             "nearest_line_lateral_offset_m":
                 None,
 
+            "nearest_line_ground_forward_distance_m":
+                None,
+
             "nearest_line_horizontal_distance_m":
                 None,
 
@@ -2934,6 +3156,15 @@ class YoloLineAnalyzer(Node):
 
             "corner_preview_confirmed":
                 False,
+
+            "corner_preview_state":
+                "UNKNOWN",
+
+            "corner_preview_held":
+                False,
+
+            "corner_hold_age_sec":
+                None,
 
             "corner_direction":
                 None,
@@ -2948,6 +3179,9 @@ class YoloLineAnalyzer(Node):
                 None,
 
             "corner_start_lateral_offset_m":
+                None,
+
+            "corner_start_ground_forward_distance_m":
                 None,
 
             "corner_start_distance_m":
@@ -2966,6 +3200,12 @@ class YoloLineAnalyzer(Node):
                 None,
 
             "corner_straight_motion_count":
+                None,
+
+            "corner_approach_motion":
+                None,
+
+            "corner_approach_level":
                 None,
 
             "corner_confirmation_raw_detected":

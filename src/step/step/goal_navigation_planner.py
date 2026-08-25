@@ -7,6 +7,9 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
+from .approach_distance import approach_level_from_motion
+from .approach_distance import approach_motion_for_distance
+
 
 @dataclass(frozen=True)
 class GoalNavigationConfig:
@@ -39,6 +42,7 @@ class GoalActionCommand:
 
     def to_dict(self) -> dict[str, Any]:
         """Return a rounded JSON-compatible representation."""
+        approach_level = approach_level_from_motion(self.action)
         return {
             "valid": self.valid,
             "action": self.action,
@@ -56,6 +60,16 @@ class GoalActionCommand:
             "is_centered": self.is_centered,
             "depth_in_score_range": self.depth_in_score_range,
             "score_now": self.score_now,
+            "approach_motion": (
+                self.action
+                if self.action == "STRAIGHT" or approach_level is not None
+                else None
+            ),
+            "approach_level": approach_level,
+            "approach_target_distance_m": _round_optional(
+                self.depth_m,
+                3,
+            ),
         }
 
 
@@ -141,14 +155,14 @@ class GoalNavigationPlanner:
             action = "SHOT"
             reason = "goal_centered_at_scoring_depth"
         elif not centered:
-            action = "ALIGN_RIGHT" if offset > 0.0 else "ALIGN_LEFT"
-            reason = "align_goal_horizontally"
+            action = "TURN_RIGHT" if offset > 0.0 else "TURN_LEFT"
+            reason = "align_backboard_center"
         elif ready_geometry:
             action = "WAIT_SCORE_CONFIRMATION"
             reason = "waiting_for_stable_score_condition"
         elif depth_error > self.config.score_depth_tolerance_m:
-            action = "APPROACH_GOAL"
-            reason = "goal_too_far"
+            action = approach_motion_for_distance(depth)
+            reason = "goal_aligned_discrete_approach"
         else:
             action = "RETREAT_GOAL"
             reason = "goal_too_close"

@@ -96,7 +96,7 @@ steering_error
 
 명령은 `STRAIGHT`, `LEFT`, `RIGHT`, `RECOVER_*_TURN_LEFT/RIGHT_[1-6]`, `STOP`입니다. 단독 `RECOVER_LEFT/RIGHT`는 사용하지 않으며 offset만 큰 경우에는 `STRAIGHT`를 유지합니다. 로봇이 라인 오른쪽에 있으면 heading `-3~+10도`, 왼쪽에 있으면 `-10~+3도`, 중앙이면 `-10~+10도`를 STRAIGHT 범위로 사용합니다. 라인에서 더 멀어지는 방향은 3도부터, 반대 방향은 10도부터 복귀 회전을 시작하며 15도 단위의 여섯 모션으로 양자화합니다. 신뢰할 수 있는 곡선과 heading 방향이 같으면 회전 중 offset은 `0.55` 미만까지 RECOVER를 덮어쓰지 않고 일반 LEFT/RIGHT를 유지합니다. quality가 낮거나 입력이 오래되면 STOP입니다.
 
-코너 준비는 heading이 아니라 경로의 각도 변화로만 검출합니다. 라인점 6개 이상, 전체 굽힘 `45도` 이상, 같은 방향 굽힘 구간 2개 이상, consistency `0.75` 이상, 유효 depth, 3프레임 연속 확인을 모두 요구합니다. 확정되면 굽기 직전 점까지의 depth에서 `0.15m` 여유를 빼고 기본 `0.05m` 직진보행 단위로 나눈 횟수를 `corner_straight_motion_count`에 제공합니다.
+코너 준비는 heading이 아니라 경로의 각도 변화로 검출합니다. 라인점은 최소 3개이며, near/far 방향 차이가 `15도 이하`면 직선, `15~30도`면 애매 구간, `30도 이상`이면 좌·우 코너 후보입니다. 최근 5프레임 중 3회 같은 방향과 유효 depth가 확인되면 확정하고 일시 누락은 0.3초 유지합니다. 코너 시작점 거리는 카메라 하향 pitch를 보정한 로봇 기준 바닥 전진거리이며, 이를 공통 실측 구간에 넣어 `STRAIGHT_0~5`를 제공합니다. `0.780m`보다 멀거나 시작점을 못 찾으면 일반 `STRAIGHT`입니다.
 
 ### 화면
 
@@ -125,8 +125,8 @@ SEARCH → NO_DEPTH/FAR/TRACK/APPROACH → PICKUP_READY → PICKUP_NOW
 - Depth Z 0.90~1.5m에서는 공이 보여도 line 주행을 유지
 - Depth Z 0.90m 안에서 ball planner로 전환
 - 좌우 오차가 크면 제자리 `TURN_LEFT/RIGHT`
-- 정렬되면 `APPROACH`, 1.0m 안에서 감속, 0.95m 안에서 `FINE_FORWARD_STEP`
-- 집기 목표: depth 0.80m ±0.05m
+- 정렬되면 depth에 따라 `STRAIGHT` 또는 `STRAIGHT_0~5`
+- 집기 목표: depth 0.07m ±0.02m
 - 화면 목표: 가로 중앙 ±0.08, 화면 높이 0.82 ±0.12
 - 조건 충족 시 `PICKUP_NOW`
 
@@ -145,13 +145,13 @@ SEARCH → NO_DEPTH/FAR/TRACK/APPROACH → PICKUP_READY → PICKUP_NOW
 - 거리 허용오차: ±0.05m
 - 중심 허용오차: ±0.10
 
-Planner 명령은 `ALIGN_LEFT/RIGHT`, `APPROACH_GOAL`, `RETREAT_GOAL`, `SHOT`, `WAIT`입니다. 조건 충족 시 화면에 `SHOT`이 표시됩니다.
+Planner 명령은 `TURN_LEFT/RIGHT`, `STRAIGHT_0~5`, `RETREAT_GOAL`, `SHOT`, `WAIT`입니다. 골대는 backboard 중심으로 좌우 정렬하고 기존 0.25m 슛 기준은 유지합니다.
 
 추적한 골대를 잃으면 `GOAL_LOST_STOP`으로 정지한 뒤 마지막 backboard 방향으로 `RECOVER_GOAL_TURN_LEFT/RIGHT` 제자리 회전을 수행합니다. 재검출 후에도 중앙 `bearing ±5deg` 안에 올 때까지 회전하며, 8초 동안 찾지 못하면 기억을 해제하고 line으로 돌아갑니다.
 
 ## 9. Hurdle 로직
 
-허들 bbox 가로 방향 5개 depth를 측정해 대표 depth, 좌우 depth, 추정 폭과 카메라-허들 평행 오차를 계산합니다. depth와 픽셀 좌표로 카메라-허들 3D 직선거리를 구한 뒤, 카메라 높이 0.70m와 허들 측정점 임시 높이 0.10m를 이용해 피타고라스 정리로 카메라 바로 아래 바닥점부터 허들까지의 간격을 계산합니다. 불가능한 기하 상태를 0m로 처리하지 않으며, 화면 하단과 허들 bbox 하단의 픽셀 간격도 depth로 길이 환산해 조기 GO를 차단합니다. 허들은 로봇이 화면 중앙으로 통과할 필요가 없으므로 bbox 중심과 카메라 중심 사이의 수평 오차는 정렬 조건으로 사용하지 않습니다.
+허들 bbox 가로 방향 5개 depth로 거리와 평행 오차를 계산합니다. 접근 방향은 잘릴 수 있는 bbox 중심 대신, bbox 안의 점을 제외한 라인 경로를 허들 아랫면까지 연장해 얻은 교차점을 사용합니다. 이 라인은 HURDLE 내부 기준점일 뿐 line planner 명령으로 사용하지 않습니다. 교차점으로 `TURN_LEFT/RIGHT`, `ground_gap_m`으로 `STRAIGHT_0~5`, 좌우 depth 차이로 근접 평행 정렬을 판단합니다.
 
 현재 임시 GO 조건:
 
@@ -160,7 +160,7 @@ Planner 명령은 `ALIGN_LEFT/RIGHT`, `APPROACH_GOAL`, `RETREAT_GOAL`, `SHOT`, `
 - 화면 하단-허들 depth 환산 간격: 0.05m 이하
 - 평행 각도 허용오차: ±8°
 
-Planner는 좌우 끝 depth 차이로 계산한 평행 오차가 ±8°를 벗어나면 `ALIGN_LEFT/RIGHT`, 평행한 상태에서 바닥 간격이 크면 `APPROACH_HURDLE`, 평행하면서 바닥 간격이 0~0.20m에 들어오면 `GO`를 냅니다. 허들의 화면 좌우 위치는 이 판단에 영향을 주지 않습니다.
+Planner는 허들 교차점 오차가 크면 `TURN_LEFT/RIGHT`, 좌우 끝 depth의 평행 오차가 ±8°를 벗어나면 `ALIGN_LEFT/RIGHT`, 정렬되고 바닥 간격이 크면 `STRAIGHT_0~5`, 평행하면서 바닥 간격이 0~0.20m에 들어오면 `GO`를 냅니다. 허들 진입 후에는 HURDLE 소스를 잠그고, 교차점은 라인 순간 누락 시 0.5초만 유지하며 이후 LINE 복귀 대신 `WAIT`합니다.
 
 최종 모션이 허들에 가까이 붙어서 천천히 넘는 방식으로 정해지면 `LOOK_DOWN → CREEP → bottom_gap_px → GO` 상태를 추가할 예정입니다. `bottom_gap_px`는 카메라 자세를 고정했을 때 화면 하단과 hurdle bbox 하단 사이의 픽셀 간격입니다.
 
@@ -172,6 +172,8 @@ Planner는 좌우 끝 depth 차이로 계산한 평행 오차가 ±8°를 벗어
 - `*_APPROACH`: 해당 객체에 집중
 - `*_LOCK`: SDK 모션 완료를 기다리며 새 명령 차단
 - `AUTO`: 공 1.5m/골대 1.0m/허들 1.0m까지 추적하고, 공 0.90m/골대 0.50m/허들 1.0m 안에서만 해당 객체 제어를 우선하는 시험 모드
+
+실행 우선순위는 `진입 가능한 공/골대/허들 > 코너 기준점 접근 > 일반 라인`이다. `LINE_TRACK` 또는 `FOLLOW_LINE_*` 중이라도 객체가 제어 범위에 들어오면 코너 접근 명령을 폐기하고 객체 planner가 즉시 제어권을 갖는다. 객체 미션 종료 후 명시적인 라인 단계로 전환되면 `LEFT/RIGHT` 및 번호형 회전은 다시 정상 사용한다.
 
 `PICKUP_NOW`, `SHOT`, `GO`가 여러 프레임 유지돼도 `sdk_motion_requested=true`는 조건 진입 시 한 번만 발행합니다. `command_id`와 `event_id`로 연속 제어 명령과 단발 모션 요청을 구분합니다.
 

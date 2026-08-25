@@ -1236,8 +1236,36 @@ class Yolo26Detector(Node):
             "RECOVER_TURN_RIGHT": "FIND BALL RIGHT",
             "STOP": "BALL STOP",
         }
+        goal_labels = {
+            "TURN_LEFT": "GOAL TURN LEFT",
+            "TURN_RIGHT": "GOAL TURN RIGHT",
+            "RETREAT_GOAL": "GOAL RETREAT",
+            "SHOT": "SHOOT",
+            "WAIT": "GOAL WAIT",
+            "WAIT_SCORE_CONFIRMATION": "GOAL HOLD",
+        }
+        hurdle_labels = {
+            "TURN_LEFT": "HURDLE TURN LEFT",
+            "TURN_RIGHT": "HURDLE TURN RIGHT",
+            "ALIGN_LEFT": "HURDLE PARALLEL LEFT",
+            "ALIGN_RIGHT": "HURDLE PARALLEL RIGHT",
+            "GO": "HURDLE GO",
+            "WAIT": "HURDLE WAIT",
+            "WAIT_GO_CONFIRMATION": "HURDLE HOLD",
+        }
+
+        def straight_label(prefix: str) -> str | None:
+            if normalized_action == "STRAIGHT":
+                return f"{prefix}STRAIGHT"
+            if not normalized_action.startswith("STRAIGHT_"):
+                return None
+            level_text = normalized_action.rsplit("_", 1)[1]
+            if not level_text.isdigit() or not 0 <= int(level_text) <= 5:
+                return None
+            return f"{prefix}STRAIGHT {int(level_text)}"
+
         if normalized_source == "line":
-            label = line_labels.get(normalized_action)
+            label = straight_label("") or line_labels.get(normalized_action)
             if label is None:
                 base_action, separator, level_text = (
                     normalized_action.rpartition("_")
@@ -1257,7 +1285,9 @@ class Yolo26Detector(Node):
                         )
             return (label, (130, 105, 0)) if label is not None else None
         if normalized_source == "ball":
-            label = ball_labels.get(normalized_action)
+            label = straight_label("BALL / ") or ball_labels.get(
+                normalized_action
+            )
             if label is None:
                 return None
             color = (
@@ -1266,6 +1296,16 @@ class Yolo26Detector(Node):
                 else (0, 105, 190)
             )
             return label, color
+        if normalized_source == "goal":
+            label = straight_label("GOAL / ") or goal_labels.get(
+                normalized_action
+            )
+            return (label, (120, 90, 155)) if label is not None else None
+        if normalized_source == "hurdle":
+            label = straight_label("HURDLE / ") or hurdle_labels.get(
+                normalized_action
+            )
+            return (label, (0, 125, 190)) if label is not None else None
         return None
 
     @staticmethod
@@ -1586,21 +1626,15 @@ class Yolo26Detector(Node):
                     info,
                     "corner_start_distance_m",
                 )
-                corner_steps = self._number(
-                    info,
-                    "corner_straight_motion_count",
-                )
+                corner_motion = str(
+                    info.get("corner_approach_motion", "STRAIGHT")
+                ).upper()
                 rows.extend(
                     [
                         f"Corner      : {corner_direction}",
                         "Corner dist : "
                         + self._metric_text(corner_distance, "m", 2),
-                        "Straight    : "
-                        + (
-                            "N/A"
-                            if corner_steps is None
-                            else f"{int(corner_steps)} motions"
-                        ),
+                        f"Approach    : {corner_motion}",
                     ]
                 )
 
@@ -1631,15 +1665,11 @@ class Yolo26Detector(Node):
             corner_direction = str(
                 source_command.get("corner_direction", "TURN")
             ).upper()
-            corner_steps = source_command.get(
-                "corner_straight_motion_count"
-            )
-            try:
-                step_text = str(max(0, int(corner_steps)))
-            except (TypeError, ValueError):
-                step_text = "?"
+            approach_motion = str(
+                source_command.get("approach_motion", "STRAIGHT")
+            ).upper()
             banner = (
-                f"{corner_direction} AHEAD / {step_text} STRAIGHT",
+                f"{corner_direction} AHEAD / {approach_motion}",
                 (0, 165, 255),
             )
         if banner is not None:
@@ -2006,6 +2036,16 @@ class Yolo26Detector(Node):
                 cv2.LINE_AA,
             )
 
+        if decision is not None:
+            banner = self._action_banner(
+                str(decision.get("source", "")),
+                str(decision.get("action", "")),
+            )
+            if banner is not None and str(
+                decision.get("action", "")
+            ).upper() != "SHOT":
+                self._draw_action_banner(image, banner[0], banner[1])
+
         if detected and info is not None and bool(info.get("score_now")):
             score_text = "SHOT"
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -2047,8 +2087,14 @@ class Yolo26Detector(Node):
         decision = self._fresh_motion_command()
         detected = bool(info and info.get("detected", False))
         # Keep the route geometry visible while hurdle metrics own the panel;
-        # the approach controller may still be steering from this line.
+        # it is only a hurdle-owned reference and never a line-mode command.
         self._draw_line_path_geometry(image, self._fresh_line_info())
+        source_command: dict[str, Any] = {}
+        if decision is not None:
+            raw_source_command = decision.get("source_command", {})
+            if isinstance(raw_source_command, dict):
+                source_command = raw_source_command
+        self._draw_hurdle_path_reference(image, source_command)
 
         panel_width = min(410, max(260, width - 24))
         panel_height = 334
@@ -2082,19 +2128,20 @@ class Yolo26Detector(Node):
             rows = ["HURDLE METRICS", f"State       : {state}"]
         else:
             state = str(info.get("state", "UNKNOWN"))
-            guidance = "N/A"
-            if decision is not None:
-                source_command = decision.get("source_command", {})
-                if isinstance(source_command, dict):
-                    line_guidance = source_command.get("line_guidance", {})
-                    if isinstance(line_guidance, dict):
-                        guidance = str(
-                            line_guidance.get("motion", "N/A")
-                        ).upper()
+            path_source = str(
+                source_command.get("path_reference_source", "none")
+            ).upper()
             rows = [
                 "HURDLE METRICS",
                 f"State       : {state}",
-                f"Line guide  : {guidance}",
+                f"Path ref    : {path_source}",
+                "Path offset : "
+                + self._metric_text(
+                    self._number(source_command, "path_offset_x_norm"),
+                    "",
+                    3,
+                    signed=True,
+                ),
                 "Depth Z     : "
                 + self._metric_text(self._number(info, "depth_m"), "m"),
                 "Ground gap  : "
@@ -2148,6 +2195,16 @@ class Yolo26Detector(Node):
                 cv2.LINE_AA,
             )
 
+        if decision is not None:
+            banner = self._action_banner(
+                str(decision.get("source", "")),
+                str(decision.get("action", "")),
+            )
+            if banner is not None and str(
+                decision.get("action", "")
+            ).upper() != "GO":
+                self._draw_action_banner(image, banner[0], banner[1])
+
         if detected and info is not None and bool(info.get("go_now")):
             go_text = "GO!"
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -2178,6 +2235,86 @@ class Yolo26Detector(Node):
                 thickness,
                 cv2.LINE_AA,
             )
+
+    @staticmethod
+    def _draw_hurdle_path_reference(
+        image: np.ndarray,
+        source_command: dict[str, Any],
+    ) -> None:
+        """Draw the inferred line bridge and hurdle approach reference."""
+        if not bool(source_command.get("path_reference_valid", False)):
+            return
+        raw_support = source_command.get("path_support_points_px", [])
+        raw_segment = source_command.get("path_bridge_segment_px")
+        raw_point = source_command.get("path_reference_point_px")
+        if not isinstance(raw_segment, list) or len(raw_segment) != 2:
+            return
+        if not isinstance(raw_point, list) or len(raw_point) != 2:
+            return
+        try:
+            segment = [
+                (int(round(float(point[0]))), int(round(float(point[1]))))
+                for point in raw_segment
+                if isinstance(point, list) and len(point) == 2
+            ]
+            reference = (
+                int(round(float(raw_point[0]))),
+                int(round(float(raw_point[1]))),
+            )
+        except (TypeError, ValueError):
+            return
+        if len(segment) != 2:
+            return
+        support: list[tuple[int, int]] = []
+        if isinstance(raw_support, list):
+            try:
+                support = [
+                    (
+                        int(round(float(point[0]))),
+                        int(round(float(point[1]))),
+                    )
+                    for point in raw_support
+                    if isinstance(point, list) and len(point) == 2
+                ]
+            except (TypeError, ValueError):
+                support = []
+        if len(support) >= 2:
+            polyline = np.asarray(support, dtype=np.int32).reshape((-1, 1, 2))
+            cv2.polylines(
+                image,
+                [polyline],
+                False,
+                (255, 255, 0),
+                3,
+                cv2.LINE_AA,
+            )
+        cv2.line(
+            image,
+            segment[0],
+            segment[1],
+            (255, 255, 0),
+            5,
+            cv2.LINE_AA,
+        )
+        cv2.drawMarker(
+            image,
+            reference,
+            (0, 165, 255),
+            cv2.MARKER_CROSS,
+            30,
+            5,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            image,
+            "HURDLE PATH TARGET",
+            (reference[0] + 16, max(24, reference[1] - 14)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.58,
+            (0, 165, 255),
+            2,
+            cv2.LINE_AA,
+        )
 
     def _draw_detections(
         self, image: np.ndarray, detections: list[Detection]

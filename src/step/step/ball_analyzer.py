@@ -18,6 +18,8 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 
+from .approach_distance import approach_level_from_motion
+from .approach_distance import approach_motion_for_distance
 from .temporal_confirmation import depth_is_within_range
 from .temporal_confirmation import TemporalConfirmationFilter
 
@@ -73,6 +75,9 @@ class BallInfo:
     vertical_offset_m: float | None
     horizontal_distance_m: float | None
     distance_m: float | None
+    approach_motion: str
+    approach_level: int | None
+    approach_target_distance_m: float | None
     depth_valid: bool
     is_centered: bool
     is_close: bool
@@ -125,9 +130,9 @@ class BallAnalyzer(Node):
         self.declare_parameter("max_valid_depth_m", 4.0)
         self.declare_parameter("detect_depth_m", 1.5)
         self.declare_parameter("approach_depth_m", 0.9)
-        self.declare_parameter("pickup_ready_depth_m", 0.9)
-        self.declare_parameter("pickup_now_depth_m", 0.8)
-        self.declare_parameter("pickup_depth_tolerance_m", 0.05)
+        self.declare_parameter("pickup_ready_depth_m", 0.15)
+        self.declare_parameter("pickup_now_depth_m", 0.07)
+        self.declare_parameter("pickup_depth_tolerance_m", 0.02)
         self.declare_parameter("pickup_center_tolerance_norm", 0.08)
         self.declare_parameter("pickup_target_y_ratio", 0.82)
         self.declare_parameter("pickup_y_tolerance_ratio", 0.12)
@@ -702,6 +707,9 @@ class BallAnalyzer(Node):
             vertical_offset_m=None,
             horizontal_distance_m=None,
             distance_m=None,
+            approach_motion="STRAIGHT",
+            approach_level=None,
+            approach_target_distance_m=None,
             depth_valid=False,
             is_centered=False,
             is_close=False,
@@ -856,6 +864,13 @@ class BallAnalyzer(Node):
                 vertical_offset_m=target.vertical_offset_m,
                 horizontal_distance_m=target.horizontal_distance_m,
                 distance_m=target.distance_m,
+                approach_motion=approach_motion_for_distance(
+                    target.depth_m
+                ),
+                approach_level=approach_level_from_motion(
+                    approach_motion_for_distance(target.depth_m)
+                ),
+                approach_target_distance_m=target.depth_m,
                 depth_valid=target.depth_valid,
                 is_centered=centered,
                 is_close=close,

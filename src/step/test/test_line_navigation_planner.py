@@ -115,6 +115,27 @@ def test_confirmed_corner_outputs_straight_motion_count_before_turn():
     assert payload["corner_straight_motion_count"] == 13
 
 
+def test_confirmed_corner_uses_shared_discrete_distance_band():
+    planner = LineNavigationPlanner(
+        NavigationConfig(direction_confirmation_frames=1)
+    )
+
+    command = planner.plan(
+        line_info(
+            corner_preview_confirmed=True,
+            corner_direction="LEFT",
+            corner_start_distance_m=0.68,
+            corner_remaining_forward_m=0.53,
+        ),
+        0.1,
+    )
+
+    payload = command.to_dict()
+    assert command.motion == "STRAIGHT_4"
+    assert payload["approach_level"] == 4
+    assert payload["approach_target_distance_m"] == pytest.approx(0.68)
+
+
 def test_far_curve_turn_starts_after_near_heading_reaches_corner():
     planner = LineNavigationPlanner(
         NavigationConfig(direction_confirmation_frames=1)

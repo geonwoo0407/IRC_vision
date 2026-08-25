@@ -13,6 +13,8 @@ from step.hurdle_navigation_planner import HurdleNavigationPlanner
 from step.line_navigation_planner import LineNavigationPlanner
 from step.line_navigation_planner import NavigationConfig
 
+from .hurdle_line_fusion import build_hurdle_path_reference
+
 
 @dataclass(frozen=True)
 class MotionDecision:
@@ -61,6 +63,7 @@ class MotionDecisionConfig:
     goal_tracking_range_m: float = 1.0
     goal_control_range_m: float = 0.5
     hurdle_control_range_m: float = 1.0
+    hurdle_path_reference_hold_sec: float = 0.50
     goal_lost_stop_sec: float = 0.35
     goal_recovery_timeout_sec: float = 8.0
     goal_recovery_turn_rad_s: float = 0.22
@@ -107,12 +110,23 @@ class MotionDecisionPlanner:
         self.last_ball_bearing_deg: float | None = None
         self.last_ball_offset_x_norm: float | None = None
         self.last_ball_turn_direction = "RIGHT"
+        self.ball_lock_active = False
+        self.ball_terminal_requested = False
+        self.ball_ignore_until_clear = False
         self.goal_tracking_active = False
         self.goal_recovery_centering = False
         self.goal_lost_elapsed_sec = 0.0
         self.last_goal_bearing_deg: float | None = None
         self.last_goal_offset_x_norm: float | None = None
         self.last_goal_turn_direction = "RIGHT"
+        self.goal_lock_active = False
+        self.goal_terminal_requested = False
+        self.goal_ignore_until_clear = False
+        self.hurdle_lock_active = False
+        self.hurdle_go_requested = False
+        self.hurdle_ignore_until_clear = False
+        self.last_hurdle_path_reference: dict[str, Any] | None = None
+        self.hurdle_path_reference_age_sec = 0.0
 
     @staticmethod
     def source_for_phase(phase: str) -> str | None:
@@ -153,6 +167,11 @@ class MotionDecisionPlanner:
         normalized_phase = phase.strip().upper() or "AUTO"
         self._update_ball_tracking(observations.get("ball"), dt_sec)
         self._update_goal_tracking(observations.get("goal"), dt_sec)
+        self._update_hurdle_lock(
+            normalized_phase,
+            observations.get("hurdle"),
+        )
+        self._update_object_locks(normalized_phase, observations)
         # Continuous line guidance does not require an SDK completion ACK.
         # Some external FSMs still publish LINE_LOCK after receiving a walking
         # command; treating that like a terminal action leaves the robot stuck
@@ -191,19 +210,28 @@ class MotionDecisionPlanner:
             self._reset_source(source)
         self.previous_source = source
         info = observations.get(source)
-        command = self._plan_source(source, info, dt_sec)
+        hurdle_reference: dict[str, Any] | None = None
         if source == "hurdle":
-            command = self._apply_hurdle_line_guidance(
-                command,
+            info, hurdle_reference = self._hurdle_observation_with_path(
+                info,
                 observations.get("line"),
                 dt_sec,
             )
+        command = self._plan_source(source, info, dt_sec)
+        if hurdle_reference is not None:
+            command.update(hurdle_reference)
         action_key = "motion" if source in {"line", "ball"} else "action"
         action = str(command.get(action_key, "WAIT"))
         terminal = (source, action) in self.TERMINAL_ACTIONS
         requested = terminal and bool(
             command.get("sdk_motion_requested", terminal)
         )
+        if source == "hurdle" and action == "GO":
+            self.hurdle_go_requested = True
+        elif source == "ball" and action == "PICKUP_NOW":
+            self.ball_terminal_requested = True
+        elif source == "goal" and action == "SHOT":
+            self.goal_terminal_requested = True
         return MotionDecision(
             phase=normalized_phase,
             source=source,
@@ -215,55 +243,147 @@ class MotionDecisionPlanner:
             source_command=command,
         )
 
-    def _apply_hurdle_line_guidance(
+    def _hurdle_observation_with_path(
         self,
-        hurdle_command: dict[str, Any],
+        hurdle_info: dict[str, Any] | None,
         line_info: dict[str, Any] | None,
         dt_sec: float,
-    ) -> dict[str, Any]:
-        """Follow the route line while approaching a still-distant hurdle."""
-        hurdle_action = str(hurdle_command.get("action", "WAIT"))
-        use_line = hurdle_action == "APPROACH_HURDLE" or (
-            not bool(hurdle_command.get("valid", False))
-            and hurdle_action in {"WAIT", "WAIT_GO_CONFIRMATION"}
-        )
-        if not use_line:
-            return hurdle_command
-        if line_info is None or not bool(line_info.get("detected", False)):
-            return hurdle_command
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        """Attach hurdle-owned path geometry without running line planner."""
+        reference = build_hurdle_path_reference(hurdle_info, line_info)
+        if bool(reference.get("path_reference_valid", False)):
+            self.last_hurdle_path_reference = dict(reference)
+            self.hurdle_path_reference_age_sec = 0.0
+        else:
+            self.hurdle_path_reference_age_sec += max(0.0, dt_sec)
+            if (
+                hurdle_info is not None
+                and bool(hurdle_info.get("detected", False))
+                and self.last_hurdle_path_reference is not None
+                and self.hurdle_path_reference_age_sec
+                <= self.config.hurdle_path_reference_hold_sec
+            ):
+                reference = dict(self.last_hurdle_path_reference)
+                reference["path_reference_source"] = "held"
+                reference["path_reference_reason"] = (
+                    "temporarily_held_line_hurdle_intersection"
+                )
+                reference["path_reference_age_sec"] = round(
+                    self.hurdle_path_reference_age_sec,
+                    3,
+                )
 
-        line_command = self.line_planner.plan(line_info, dt_sec).to_dict()
-        if not bool(line_command.get("valid", False)):
-            return hurdle_command
+        if hurdle_info is None:
+            return None, reference
+        enriched = dict(hurdle_info)
+        enriched.update(reference)
+        return enriched, reference
 
-        combined = dict(hurdle_command)
-        reason = (
-            "hurdle_approach_with_line_guidance"
-            if hurdle_action == "APPROACH_HURDLE"
-            else "hurdle_not_actionable_following_line"
+    def _update_hurdle_lock(
+        self,
+        phase: str,
+        hurdle_info: dict[str, Any] | None,
+    ) -> None:
+        """Latch hurdle ownership until an acknowledged jump changes phase."""
+        requested = self.source_for_phase(phase)
+        post_jump_phase_change = bool(
+            self.hurdle_lock_active
+            and self.hurdle_go_requested
+            and requested in {"line", "ball", "goal"}
+            and not phase.endswith("_LOCK")
         )
-        combined.update(
-            {
-                "action": line_command["motion"],
-                "valid": True,
-                "reason": reason,
-                "linear_speed_mps": line_command["linear_speed_mps"],
-                "lateral_speed_mps": line_command["lateral_speed_mps"],
-                "angular_speed_rad_s": line_command["angular_speed_rad_s"],
-                "line_guidance": line_command,
-                "hurdle_action": hurdle_action,
-                "hurdle_reason": hurdle_command.get("reason"),
-            }
+        if phase in {"HURDLE_DONE", "JUMP_DONE", "POST_HURDLE"}:
+            post_jump_phase_change = True
+        if post_jump_phase_change:
+            self.hurdle_lock_active = False
+            self.hurdle_go_requested = False
+            self.hurdle_ignore_until_clear = True
+            self.last_hurdle_path_reference = None
+            self.hurdle_path_reference_age_sec = 0.0
+            return
+        if self.hurdle_ignore_until_clear:
+            if not self._confirmed_hurdle(hurdle_info):
+                self.hurdle_ignore_until_clear = False
+            return
+        if self._confirmed_hurdle(hurdle_info):
+            self.hurdle_lock_active = True
+
+    def _update_object_locks(
+        self,
+        phase: str,
+        observations: dict[str, dict[str, Any] | None],
+    ) -> None:
+        """Keep ball/goal ownership after control-range mission entry."""
+        requested = self.source_for_phase(phase)
+        explicit_next_source = (
+            requested
+            if requested in {"line", "ball", "goal", "hurdle"}
+            and not phase.endswith("_LOCK")
+            else None
         )
-        return combined
+
+        if (
+            self.ball_lock_active
+            and self.ball_terminal_requested
+            and explicit_next_source not in {None, "ball"}
+        ):
+            self.ball_lock_active = False
+            self.ball_terminal_requested = False
+            self.ball_ignore_until_clear = True
+        if (
+            self.goal_lock_active
+            and self.goal_terminal_requested
+            and explicit_next_source not in {None, "goal"}
+        ):
+            self.goal_lock_active = False
+            self.goal_terminal_requested = False
+            self.goal_ignore_until_clear = True
+
+        ball_info = observations.get("ball")
+        goal_info = observations.get("goal")
+        if self.ball_ignore_until_clear:
+            if not self._ball_is_inside_control_range(ball_info):
+                self.ball_ignore_until_clear = False
+        if self.goal_ignore_until_clear:
+            if not self._goal_is_inside_control_range(goal_info):
+                self.goal_ignore_until_clear = False
+
+        if self.ball_lock_active or self.goal_lock_active:
+            return
+        if self.hurdle_lock_active:
+            return
+        # A line phase only says what to do while no mission target is close
+        # enough to control.  It must not pin ownership to line/corner motion:
+        # a ball or goal entering its control range immediately preempts both
+        # ordinary line following and a confirmed corner approach.  Explicit
+        # object phases still remain exclusive so, for example, a visible ball
+        # cannot steal ownership during GOAL_APPROACH.
+        phase_allows_ball = requested in {None, "line", "ball"}
+        phase_allows_goal = requested in {None, "line", "goal"}
+        if (
+            phase_allows_ball
+            and not self.ball_ignore_until_clear
+            and self._ball_is_inside_control_range(ball_info)
+        ):
+            self.ball_lock_active = True
+        elif (
+            phase_allows_goal
+            and not self.goal_ignore_until_clear
+            and self._goal_is_inside_control_range(goal_info)
+        ):
+            self.goal_lock_active = True
 
     def _select_source(
         self,
         phase: str,
         observations: dict[str, dict[str, Any] | None],
     ) -> str:
-        if self._confirmed_hurdle(observations.get("hurdle")):
+        if self.hurdle_lock_active:
             return "hurdle"
+        if self.ball_lock_active:
+            return "ball"
+        if self.goal_lock_active:
+            return "goal"
         requested = self.source_for_phase(phase)
         if requested is None:
             return self._select_auto_source(observations)
@@ -274,27 +394,8 @@ class MotionDecisionPlanner:
             if requested == "ball":
                 if self._ball_is_inside_control_range(target):
                     return "ball"
-                if (
-                    self.config.enable_ball_lost_recovery
-                    and self.ball_recovery_centering
-                ):
-                    return "ball"
-                if (
-                    self.config.enable_ball_lost_recovery
-                    and
-                    self.ball_tracking_active
-                    and self.ball_lost_elapsed_sec > 0.0
-                ):
-                    return "ball"
             elif requested == "goal":
                 if self._goal_is_inside_control_range(target):
-                    return "goal"
-                if self.goal_recovery_centering:
-                    return "goal"
-                if (
-                    self.goal_tracking_active
-                    and self.goal_lost_elapsed_sec > 0.0
-                ):
                     return "goal"
             elif target is not None and bool(target.get("detected", False)):
                 return requested
@@ -308,29 +409,17 @@ class MotionDecisionPlanner:
         self,
         observations: dict[str, dict[str, Any] | None],
     ) -> str:
-        hurdle = observations.get("hurdle")
-        if self._confirmed_hurdle(hurdle):
+        if self.hurdle_lock_active:
             return "hurdle"
+        if self.ball_lock_active:
+            return "ball"
+        if self.goal_lock_active:
+            return "goal"
         ball = observations.get("ball")
         if self._ball_is_inside_control_range(ball):
             return "ball"
-        if (
-            self.config.enable_ball_lost_recovery
-            and self.ball_recovery_centering
-        ):
-            return "ball"
-        if (
-            self.config.enable_ball_lost_recovery
-            and self.ball_tracking_active
-            and self.ball_lost_elapsed_sec > 0.0
-        ):
-            return "ball"
         goal = observations.get("goal")
         if self._goal_is_inside_control_range(goal):
-            return "goal"
-        if self.goal_recovery_centering:
-            return "goal"
-        if self.goal_tracking_active and self.goal_lost_elapsed_sec > 0.0:
             return "goal"
         for source in self.AUTO_PRIORITY:
             info = observations.get(source)
