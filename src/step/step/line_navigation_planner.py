@@ -23,8 +23,7 @@ class NavigationConfig:
     recovery_turn_speed_rad_s: float = 0.22
     recovery_heading_turn_deg: float = 15.0
     recovery_straight_offset_norm: float = 0.45
-    recovery_parallel_heading_deg: float = 5.0
-    perspective_offset_gain_deg: float = 42.0
+    recovery_parallel_heading_deg: float = 2.0
     max_angular_speed_rad_s: float = 0.60
     max_angular_accel_rad_s2: float = 1.20
     heading_gain: float = 1.0
@@ -63,7 +62,6 @@ class NavigationCommand:
     offset_component_deg: float
     preview_component_deg: float
     heading_error_deg: float | None
-    perspective_compensated_heading_deg: float | None
     lateral_offset_norm: float | None
     preview_turn_deg: float | None
     line_quality: float
@@ -95,10 +93,6 @@ class NavigationCommand:
             "offset_component_deg": round(self.offset_component_deg, 3),
             "preview_component_deg": round(self.preview_component_deg, 3),
             "heading_error_deg": _round_optional(self.heading_error_deg, 3),
-            "perspective_compensated_heading_deg": _round_optional(
-                self.perspective_compensated_heading_deg,
-                3,
-            ),
             "lateral_offset_norm": _round_optional(
                 self.lateral_offset_norm, 6
             ),
@@ -208,7 +202,6 @@ class LineNavigationPlanner:
             offset_component_deg=0.0,
             preview_component_deg=0.0,
             heading_error_deg=None,
-            perspective_compensated_heading_deg=None,
             lateral_offset_norm=None,
             preview_turn_deg=None,
             line_quality=0.0,
@@ -233,11 +226,6 @@ class LineNavigationPlanner:
 
         if heading is None or offset is None:
             return self.stop("invalid_line_geometry")
-
-        perspective_compensated_heading = (
-            heading
-            + self.config.perspective_offset_gain_deg * offset
-        )
 
         qualities = [
             _number(line_info, "heading_quality"),
@@ -291,7 +279,6 @@ class LineNavigationPlanner:
             else self._classify_recovery(
                 offset,
                 heading,
-                perspective_compensated_heading,
                 curve_matches_heading,
             )
         )
@@ -299,7 +286,6 @@ class LineNavigationPlanner:
             return self._recovery_command(
                 recovery_motion,
                 heading,
-                perspective_compensated_heading,
                 offset,
                 quality,
             )
@@ -412,9 +398,6 @@ class LineNavigationPlanner:
             offset_component_deg=offset_component,
             preview_component_deg=preview_component,
             heading_error_deg=heading,
-            perspective_compensated_heading_deg=(
-                perspective_compensated_heading
-            ),
             lateral_offset_norm=offset,
             preview_turn_deg=curve_turn,
             line_quality=quality,
@@ -424,7 +407,6 @@ class LineNavigationPlanner:
         self,
         lateral_offset_norm: float,
         heading_error_deg: float,
-        perspective_compensated_heading_deg: float,
         curve_matches_heading: bool,
     ) -> str | None:
         """Classify line side and required turn as separate recovery axes."""
@@ -439,7 +421,7 @@ class LineNavigationPlanner:
             <= self.config.recovery_straight_offset_norm
         )
         nearly_parallel = bool(
-            abs(perspective_compensated_heading_deg)
+            abs(heading_error_deg)
             <= self.config.recovery_parallel_heading_deg
         )
         points_slightly_toward_line = bool(
@@ -480,7 +462,6 @@ class LineNavigationPlanner:
         self,
         motion: str,
         heading: float,
-        perspective_compensated_heading: float,
         offset: float,
         quality: float,
     ) -> NavigationCommand:
@@ -519,9 +500,6 @@ class LineNavigationPlanner:
             offset_component_deg=self.config.offset_gain_deg * offset,
             preview_component_deg=0.0,
             heading_error_deg=heading,
-            perspective_compensated_heading_deg=(
-                perspective_compensated_heading
-            ),
             lateral_offset_norm=offset,
             preview_turn_deg=None,
             line_quality=quality,

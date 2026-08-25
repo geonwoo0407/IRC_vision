@@ -170,7 +170,7 @@ def test_large_offset_creates_separate_recovery_command(
         (0.593, -32.0, "RECOVER_RIGHT_TURN_LEFT_2", -1),
         (0.366, 15.0, "RECOVER_RIGHT_TURN_RIGHT_1", 1),
         (-0.40, -15.0, "RECOVER_LEFT_TURN_LEFT_1", -1),
-        (-0.40, 30.0, "RECOVER_LEFT_TURN_RIGHT_2", 1),
+        (-0.40, 15.0, "RECOVER_LEFT_TURN_RIGHT_1", 1),
     ],
 )
 def test_recovery_separates_line_side_from_turn_direction(
@@ -236,62 +236,6 @@ def test_moderate_offset_and_parallel_line_can_continue_straight():
     )
 
     assert command.motion == "STRAIGHT"
-
-
-def test_perspective_compensation_keeps_converging_straight_line_straight():
-    planner = LineNavigationPlanner()
-
-    command = planner.plan(
-        line_info(
-            filtered_lateral_offset_norm=-0.216,
-            filtered_heading_error_deg=9.1,
-            turn_angle_deg=-1.2,
-            path_turn_delta_deg=-1.2,
-            turn_consistency=0.9,
-        ),
-        0.1,
-    )
-
-    assert command.motion == "STRAIGHT"
-    assert command.perspective_compensated_heading_deg == pytest.approx(
-        0.028
-    )
-    assert command.to_dict()[
-        "perspective_compensated_heading_deg"
-    ] == pytest.approx(0.028)
-
-
-def test_perspective_compensation_is_symmetric_across_image_center():
-    planner = LineNavigationPlanner()
-
-    command = planner.plan(
-        line_info(
-            filtered_lateral_offset_norm=0.109,
-            filtered_heading_error_deg=-4.5,
-            turn_angle_deg=0.0,
-        ),
-        0.1,
-    )
-
-    assert command.motion == "STRAIGHT"
-    assert command.perspective_compensated_heading_deg == pytest.approx(
-        0.078
-    )
-
-
-def test_displaced_line_without_perspective_convergence_still_recovers():
-    planner = LineNavigationPlanner()
-
-    command = planner.plan(
-        line_info(
-            filtered_lateral_offset_norm=-0.216,
-            filtered_heading_error_deg=0.0,
-            turn_angle_deg=0.0,
-        ),
-        0.1,
-    )
-
-    assert command.motion == "RECOVER_LEFT"
 
 
 def test_moderate_offset_heading_toward_line_stays_straight():

@@ -84,7 +84,7 @@ YOLO가 여러 개의 `line` 조각을 검출하면 bbox 중심점을 화면 아
 
 ### Planner
 
-조향 오차는 heading, offset, 신뢰할 수 있는 먼 경로 preview를 합쳐 계산합니다. 복귀 진입 전에는 `heading + 42 × offset_norm`으로 영상 원근 기울기를 보정하며, offset `±0.45` 안에서 보정 heading이 `±5도`이면 직선 주행을 유지합니다.
+조향 오차는 heading, offset, 신뢰할 수 있는 먼 경로 preview를 합쳐 계산합니다.
 
 ```text
 steering_error

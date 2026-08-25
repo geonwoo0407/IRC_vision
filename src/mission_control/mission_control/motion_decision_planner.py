@@ -47,8 +47,6 @@ class MotionDecisionConfig:
 
     enable_ball_lost_recovery: bool = False
     recovery_heading_turn_deg: float = 15.0
-    recovery_parallel_heading_deg: float = 5.0
-    perspective_offset_gain_deg: float = 42.0
     ball_tracking_range_m: float = 1.5
     ball_control_range_m: float = 0.9
     ball_lost_stop_sec: float = 0.35
@@ -88,13 +86,7 @@ class MotionDecisionPlanner:
             NavigationConfig(
                 recovery_heading_turn_deg=(
                     self.config.recovery_heading_turn_deg
-                ),
-                recovery_parallel_heading_deg=(
-                    self.config.recovery_parallel_heading_deg
-                ),
-                perspective_offset_gain_deg=(
-                    self.config.perspective_offset_gain_deg
-                ),
+                )
             )
         )
         self.ball_planner = BallNavigationPlanner()
