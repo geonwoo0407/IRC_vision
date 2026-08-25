@@ -95,6 +95,8 @@ steering_error
 
 명령은 `STRAIGHT`, `LEFT`, `RIGHT`, `RECOVER_*_TURN_LEFT/RIGHT_[1-6]`, `STOP`입니다. 단독 `RECOVER_LEFT/RIGHT`는 사용하지 않으며 offset만 큰 경우에는 `STRAIGHT`를 유지합니다. 복귀 회전은 근거리 line heading 절댓값 `10도`부터 시작하고, 15도 단위의 여섯 모션으로 양자화합니다. quality가 낮거나 입력이 오래되면 STOP입니다.
 
+코너 준비는 heading이 아니라 경로의 각도 변화로만 검출합니다. 라인점 6개 이상, 전체 굽힘 `45도` 이상, 같은 방향 굽힘 구간 2개 이상, consistency `0.75` 이상, 유효 depth, 3프레임 연속 확인을 모두 요구합니다. 확정되면 굽기 직전 점까지의 depth에서 `0.15m` 여유를 빼고 기본 `0.05m` 직진보행 단위로 나눈 횟수를 `corner_straight_motion_count`에 제공합니다.
+
 ### 화면
 
 line planner 선택 시 YOLO bbox 라벨 대신 다음을 표시합니다.

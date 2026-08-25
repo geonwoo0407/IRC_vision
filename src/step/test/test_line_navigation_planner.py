@@ -86,6 +86,35 @@ def test_far_curve_slows_down_without_starting_turn_early():
     assert command.linear_speed_mps < planner.config.max_linear_speed_mps
 
 
+def test_confirmed_corner_outputs_straight_motion_count_before_turn():
+    planner = LineNavigationPlanner(
+        NavigationConfig(direction_confirmation_frames=1)
+    )
+
+    command = planner.plan(
+        line_info(
+            filtered_heading_error_deg=0.0,
+            filtered_lateral_offset_norm=0.0,
+            turn_angle_deg=80.0,
+            turn_consistency=0.95,
+            corner_preview_confirmed=True,
+            corner_direction="RIGHT",
+            corner_start_distance_m=0.82,
+            corner_remaining_forward_m=0.67,
+            corner_straight_motion_count=13,
+        ),
+        0.1,
+    )
+
+    payload = command.to_dict()
+    assert command.motion == "STRAIGHT"
+    assert command.reason == "corner_approach"
+    assert payload["corner_prepare"] is True
+    assert payload["corner_direction"] == "RIGHT"
+    assert payload["corner_start_distance_m"] == pytest.approx(0.82)
+    assert payload["corner_straight_motion_count"] == 13
+
+
 def test_far_curve_turn_starts_after_near_heading_reaches_corner():
     planner = LineNavigationPlanner(
         NavigationConfig(direction_confirmation_frames=1)

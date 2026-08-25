@@ -500,6 +500,11 @@ turn_level                  15도 단위 회전 단계(1~6)
 turn_angle_deg              단계별 목표 회전각(-90~+90도)
 steering_error_deg           heading/offset/preview를 합친 조향 오차
 line_quality                 사용된 최소 line quality
+corner_prepare              실제 코너와 시작점 거리가 확정됐는지 여부
+corner_direction            미리 보이는 코너 방향(LEFT / RIGHT)
+corner_start_distance_m     코너 시작점까지의 RealSense 수평거리
+corner_remaining_forward_m  회전 여유거리를 제외한 직진거리
+corner_straight_motion_count 코너 전 실행할 직진보행 모션 횟수
 valid_for_sec                수신 측 watchdog 유효시간
 ```
 
@@ -508,6 +513,10 @@ valid_for_sec                수신 측 watchdog 유효시간
 라인 중심 offset만 큰 경우에는 단독 `RECOVER_LEFT/RIGHT`를 발행하지 않고 `STRAIGHT`를 유지합니다. 근거리 heading 절댓값이 `10도` 이상이고 실제 곡선 방향과 일치하지 않을 때만 `RECOVER_*_TURN_LEFT/RIGHT_1~6`을 발행합니다. `RECOVER_LEFT/RIGHT` 부분은 라인이 있는 쪽이고, 실제 회전 방향은 `TURN_LEFT/RIGHT`입니다. 회전은 카메라 중심선과 근거리 라인 사이의 heading 절댓값을 기준으로 `15`, `30`, `45`, `60`, `75`, `90`도의 6단계로 양자화합니다. 경계는 `10~22.5도 미만`, `22.5~37.5`, `37.5~52.5`, `52.5~67.5`, `67.5~82.5`, `82.5도 이상`이며 각 경계값은 다음 단계에 포함됩니다.
 
 일반 `LEFT/RIGHT` 명령은 heading이나 offset만으로는 발행하지 않습니다. 먼 경로의 turn angle 또는 구간별 signed path turn이 `8도` 이상이고 consistency가 `0.55` 이상이며 조향 방향과 일치할 때만 발행합니다. 따라서 기울어진 일자 라인은 일반 `RIGHT`가 아니라 `STRAIGHT` 또는 필요한 경우 `RECOVER_*`로 처리하고, 실제 우회전 곡선에서만 일반 `RIGHT`를 발행합니다.
+
+코너 사전 준비는 단순 heading과 분리되어 있습니다. 라인점이 6개 이상이고 near-to-far 경로 변화가 기본 `45도` 이상이며, 기준 직선에서 `12도` 이상 벗어나는 같은 방향 구간이 2개 이상 이어질 때 굽기 직전 점을 코너 시작점으로 선택합니다. 이 형상이 유효한 aligned depth와 함께 3프레임 연속 확인되어야 `corner_prepare=true`가 됩니다. 직선은 구간 각도가 거의 일정하므로 heading이 기울어도 코너 준비가 발생하지 않습니다.
+
+직진보행 횟수는 `floor((시작점 depth - 회전 여유거리) / 직진 1회 거리)`로 계산합니다. 기본은 직진 1회 `0.05m`, 회전 여유거리 `0.15m`이며 실제 로봇 보폭에 맞춰 반드시 조정해야 합니다. 수신 측에서는 같은 명령을 프레임마다 누적하지 말고 최신 `command_id`의 횟수로 교체해야 합니다.
 
 ```bash
 ros2 run step line_navigation_controller --ros-args \
@@ -521,7 +530,10 @@ ros2 run step line_navigation_controller --ros-args \
 
 ```bash
 ros2 launch mission_control full_system.launch.py \
-  recovery_heading_turn_deg:=10.0
+  recovery_heading_turn_deg:=10.0 \
+  corner_min_turn_delta_deg:=45.0 \
+  corner_straight_motion_distance_m:=0.05 \
+  corner_turn_margin_m:=0.15
 ```
 
 방향 부호는 기존 line analyzer와 같습니다. 화면상 경로가 오른쪽이면 heading/offset이 양수이고 `RIGHT` 및 양의 각속도가 출력됩니다. 보행 알고리즘에서는 `command_id`가 새로 들어올 때 기존 목표를 새 값으로 교체해야 하며, `travel_distance_m`을 매 메시지마다 큐에 누적하면 안 됩니다. 또한 `valid_for_sec` 안에 새 명령이 없으면 자체적으로도 정지시키는 watchdog을 두는 것이 좋습니다.

@@ -65,6 +65,11 @@ class NavigationCommand:
     lateral_offset_norm: float | None
     preview_turn_deg: float | None
     line_quality: float
+    corner_prepare: bool
+    corner_direction: str | None
+    corner_start_distance_m: float | None
+    corner_remaining_forward_m: float | None
+    corner_straight_motion_count: int | None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a rounded JSON-compatible representation."""
@@ -98,6 +103,19 @@ class NavigationCommand:
             ),
             "preview_turn_deg": _round_optional(self.preview_turn_deg, 3),
             "line_quality": round(self.line_quality, 4),
+            "corner_prepare": self.corner_prepare,
+            "corner_direction": self.corner_direction,
+            "corner_start_distance_m": _round_optional(
+                self.corner_start_distance_m,
+                4,
+            ),
+            "corner_remaining_forward_m": _round_optional(
+                self.corner_remaining_forward_m,
+                4,
+            ),
+            "corner_straight_motion_count": (
+                self.corner_straight_motion_count
+            ),
             "recovery_side": recovery_side,
             "turn_motion": turn_motion,
             "turn_level": turn_level,
@@ -205,6 +223,11 @@ class LineNavigationPlanner:
             lateral_offset_norm=None,
             preview_turn_deg=None,
             line_quality=0.0,
+            corner_prepare=False,
+            corner_direction=None,
+            corner_start_distance_m=None,
+            corner_remaining_forward_m=None,
+            corner_straight_motion_count=None,
         )
 
     def plan(
@@ -239,6 +262,41 @@ class LineNavigationPlanner:
         quality = _clamp(quality, 0.0, 1.0)
         if quality < self.config.min_line_quality:
             return self.stop("low_line_quality")
+
+        corner_prepare = bool(
+            line_info.get("corner_preview_confirmed", False)
+        )
+        corner_direction_value = str(
+            line_info.get("corner_direction", "")
+        ).strip().upper()
+        corner_direction = (
+            corner_direction_value
+            if corner_direction_value in {"LEFT", "RIGHT"}
+            else None
+        )
+        corner_start_distance = _number(
+            line_info,
+            "corner_start_distance_m",
+        )
+        corner_remaining_forward = _number(
+            line_info,
+            "corner_remaining_forward_m",
+        )
+        corner_motion_count_value = _number(
+            line_info,
+            "corner_straight_motion_count",
+        )
+        corner_motion_count = (
+            max(0, int(corner_motion_count_value))
+            if corner_motion_count_value is not None
+            else None
+        )
+        corner_prepare = bool(
+            corner_prepare
+            and corner_direction is not None
+            and corner_start_distance is not None
+            and corner_motion_count is not None
+        )
 
         preview_turn = _number(line_info, "turn_angle_deg")
         path_turn_delta = _number(line_info, "path_turn_delta_deg")
@@ -376,6 +434,8 @@ class LineNavigationPlanner:
         elif turn_confirmation_pending:
             speed = self.config.min_linear_speed_mps
             reason = "turn_confirmation_pending"
+        if corner_prepare and motion == "STRAIGHT":
+            reason = "corner_approach"
         duration = self.config.command_duration_sec
 
         self.previous_motion = motion
@@ -401,6 +461,17 @@ class LineNavigationPlanner:
             lateral_offset_norm=offset,
             preview_turn_deg=curve_turn,
             line_quality=quality,
+            corner_prepare=corner_prepare,
+            corner_direction=corner_direction if corner_prepare else None,
+            corner_start_distance_m=(
+                corner_start_distance if corner_prepare else None
+            ),
+            corner_remaining_forward_m=(
+                corner_remaining_forward if corner_prepare else None
+            ),
+            corner_straight_motion_count=(
+                corner_motion_count if corner_prepare else None
+            ),
         )
 
     def _classify_recovery(
@@ -506,6 +577,11 @@ class LineNavigationPlanner:
             lateral_offset_norm=offset,
             preview_turn_deg=None,
             line_quality=quality,
+            corner_prepare=False,
+            corner_direction=None,
+            corner_start_distance_m=None,
+            corner_remaining_forward_m=None,
+            corner_straight_motion_count=None,
         )
 
     def _classify_motion(self, steering_error_deg: float) -> str:

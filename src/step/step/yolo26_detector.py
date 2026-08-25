@@ -1506,7 +1506,7 @@ class Yolo26Detector(Node):
         info = self._fresh_line_info()
         self._draw_line_path_geometry(image, info)
         panel_width = min(410, max(270, width - 24))
-        panel_height = 238
+        panel_height = 310
         panel_x = max(12, width - panel_width - 12)
         panel_y = 44
         panel_bottom = min(height - 8, panel_y + panel_height)
@@ -1578,6 +1578,31 @@ class Yolo26Detector(Node):
                 + self._metric_text(turn, "deg", 1, signed=True),
                 "Quality     : " + self._metric_text(quality, "", 3),
             ]
+            if bool(info.get("corner_preview_confirmed", False)):
+                corner_direction = str(
+                    info.get("corner_direction", "UNKNOWN")
+                ).upper()
+                corner_distance = self._number(
+                    info,
+                    "corner_start_distance_m",
+                )
+                corner_steps = self._number(
+                    info,
+                    "corner_straight_motion_count",
+                )
+                rows.extend(
+                    [
+                        f"Corner      : {corner_direction}",
+                        "Corner dist : "
+                        + self._metric_text(corner_distance, "m", 2),
+                        "Straight    : "
+                        + (
+                            "N/A"
+                            if corner_steps is None
+                            else f"{int(corner_steps)} motions"
+                        ),
+                    ]
+                )
 
         for index, row in enumerate(rows):
             title = index == 0
@@ -1593,6 +1618,30 @@ class Yolo26Detector(Node):
             )
 
         banner = self._action_banner(planner_source, planner_action)
+        source_command = (
+            decision.get("source_command", {})
+            if decision is not None
+            else {}
+        )
+        if (
+            planner_source == "LINE"
+            and isinstance(source_command, dict)
+            and bool(source_command.get("corner_prepare", False))
+        ):
+            corner_direction = str(
+                source_command.get("corner_direction", "TURN")
+            ).upper()
+            corner_steps = source_command.get(
+                "corner_straight_motion_count"
+            )
+            try:
+                step_text = str(max(0, int(corner_steps)))
+            except (TypeError, ValueError):
+                step_text = "?"
+            banner = (
+                f"{corner_direction} AHEAD / {step_text} STRAIGHT",
+                (0, 165, 255),
+            )
         if banner is not None:
             self._draw_action_banner(image, banner[0], banner[1])
 
@@ -1672,6 +1721,39 @@ class Yolo26Detector(Node):
                 2,
                 cv2.LINE_AA,
             )
+
+        raw_corner_point = info.get("corner_start_point_px")
+        if (
+            bool(info.get("corner_preview_confirmed", False))
+            and isinstance(raw_corner_point, list)
+            and len(raw_corner_point) == 2
+        ):
+            try:
+                corner_point = (
+                    int(round(float(raw_corner_point[0]))),
+                    int(round(float(raw_corner_point[1]))),
+                )
+            except (TypeError, ValueError):
+                corner_point = None
+            if corner_point is not None:
+                cv2.circle(
+                    image,
+                    corner_point,
+                    15,
+                    (0, 165, 255),
+                    4,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    image,
+                    "TURN START",
+                    (corner_point[0] + 18, corner_point[1] - 14),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.62,
+                    (0, 165, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
 
         if points:
             near = points[0]

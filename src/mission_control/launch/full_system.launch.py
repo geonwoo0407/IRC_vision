@@ -27,6 +27,15 @@ def generate_launch_description() -> LaunchDescription:
     robot_center_offset_px = LaunchConfiguration(
         "robot_center_offset_px"
     )
+    corner_min_turn_delta_deg = LaunchConfiguration(
+        "corner_min_turn_delta_deg"
+    )
+    corner_straight_motion_distance_m = LaunchConfiguration(
+        "corner_straight_motion_distance_m"
+    )
+    corner_turn_margin_m = LaunchConfiguration(
+        "corner_turn_margin_m"
+    )
 
     camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -70,7 +79,19 @@ def generate_launch_description() -> LaunchDescription:
                 "robot_center_offset_px": ParameterValue(
                     robot_center_offset_px,
                     value_type=float,
-                )
+                ),
+                "corner_min_turn_delta_deg": ParameterValue(
+                    corner_min_turn_delta_deg,
+                    value_type=float,
+                ),
+                "corner_straight_motion_distance_m": ParameterValue(
+                    corner_straight_motion_distance_m,
+                    value_type=float,
+                ),
+                "corner_turn_margin_m": ParameterValue(
+                    corner_turn_margin_m,
+                    value_type=float,
+                ),
             }
         ],
     )
@@ -133,6 +154,21 @@ def generate_launch_description() -> LaunchDescription:
                 "robot_center_offset_px",
                 default_value="70.0",
                 description="Robot center shift right from image midpoint.",
+            ),
+            DeclareLaunchArgument(
+                "corner_min_turn_delta_deg",
+                default_value="45.0",
+                description="Minimum path bend for a real corner preview.",
+            ),
+            DeclareLaunchArgument(
+                "corner_straight_motion_distance_m",
+                default_value="0.05",
+                description="Forward distance of one straight walk motion.",
+            ),
+            DeclareLaunchArgument(
+                "corner_turn_margin_m",
+                default_value="0.15",
+                description="Distance reserved before the corner starts.",
             ),
             camera,
             detector,
