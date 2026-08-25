@@ -532,6 +532,8 @@ ros2 run step line_navigation_controller --ros-args \
 ros2 launch mission_control full_system.launch.py \
   recovery_heading_turn_deg:=10.0 \
   recovery_away_heading_turn_deg:=3.0 \
+  line_roi_x_min_ratio:=0.15 \
+  line_roi_x_max_ratio:=0.85 \
   corner_min_turn_delta_deg:=45.0 \
   corner_straight_motion_distance_m:=0.05 \
   corner_turn_margin_m:=0.15

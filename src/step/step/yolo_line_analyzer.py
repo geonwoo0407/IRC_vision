@@ -231,12 +231,12 @@ class YoloLineAnalyzer(Node):
 
         self.declare_parameter(
             "roi_x_min_ratio",
-            0.25,
+            0.15,
         )
 
         self.declare_parameter(
             "roi_x_max_ratio",
-            0.75,
+            0.85,
         )
 
         self.declare_parameter(

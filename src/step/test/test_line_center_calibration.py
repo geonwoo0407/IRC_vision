@@ -20,6 +20,40 @@ def test_center_calibration_is_clipped_inside_image():
     assert calibrated_robot_center_x(1280, 1000.0) == 1279.0
 
 
+def test_line_roi_uses_fifteen_to_eighty_five_percent_width():
+    analyzer = YoloLineAnalyzer.__new__(YoloLineAnalyzer)
+    analyzer.image_width = 1280
+    analyzer.image_height = 720
+    analyzer.roi_x_min_ratio = 0.15
+    analyzer.roi_x_max_ratio = 0.85
+    analyzer.roi_y_min_ratio = 0.0
+    analyzer.roi_y_max_ratio = 1.0
+    analyzer.line_class_name = "line"
+    analyzer.min_confidence = 0.4
+    analyzer.min_bbox_width_px = 3
+    analyzer.min_bbox_height_px = 3
+    analyzer.max_points = 30
+
+    def detection(center_x):
+        return {
+            "class_name": "line",
+            "confidence": 0.9,
+            "bbox": [center_x - 2, 358, center_x + 2, 362],
+            "center": [center_x, 360],
+        }
+
+    points = analyzer._extract_line_points(
+        [
+            detection(191),
+            detection(192),
+            detection(1088),
+            detection(1089),
+        ]
+    )
+
+    assert [point.x for point in points] == [192.0, 1088.0]
+
+
 def test_path_turn_delta_separates_straight_and_right_curve():
     straight = YoloLineAnalyzer._calculate_angle_change_statistics(
         [12.0, 12.2, 12.1]

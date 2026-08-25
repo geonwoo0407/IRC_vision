@@ -81,6 +81,7 @@ YOLO가 여러 개의 `line` 조각을 검출하면 bbox 중심점을 화면 아
 - turn consistency
 - heading, geometry, detection quality
 - median 및 EMA 기반 filtered heading/offset
+- 라인 중심점의 가로 ROI는 화면 폭의 `15~85%`
 
 ### Planner
 

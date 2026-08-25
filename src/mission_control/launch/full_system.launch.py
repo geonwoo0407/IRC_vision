@@ -30,6 +30,12 @@ def generate_launch_description() -> LaunchDescription:
     robot_center_offset_px = LaunchConfiguration(
         "robot_center_offset_px"
     )
+    line_roi_x_min_ratio = LaunchConfiguration(
+        "line_roi_x_min_ratio"
+    )
+    line_roi_x_max_ratio = LaunchConfiguration(
+        "line_roi_x_max_ratio"
+    )
     corner_min_turn_delta_deg = LaunchConfiguration(
         "corner_min_turn_delta_deg"
     )
@@ -81,6 +87,14 @@ def generate_launch_description() -> LaunchDescription:
             {
                 "robot_center_offset_px": ParameterValue(
                     robot_center_offset_px,
+                    value_type=float,
+                ),
+                "roi_x_min_ratio": ParameterValue(
+                    line_roi_x_min_ratio,
+                    value_type=float,
+                ),
+                "roi_x_max_ratio": ParameterValue(
+                    line_roi_x_max_ratio,
                     value_type=float,
                 ),
                 "corner_min_turn_delta_deg": ParameterValue(
@@ -169,6 +183,16 @@ def generate_launch_description() -> LaunchDescription:
                 "robot_center_offset_px",
                 default_value="70.0",
                 description="Robot center shift right from image midpoint.",
+            ),
+            DeclareLaunchArgument(
+                "line_roi_x_min_ratio",
+                default_value="0.15",
+                description="Left image boundary used by the line analyzer.",
+            ),
+            DeclareLaunchArgument(
+                "line_roi_x_max_ratio",
+                default_value="0.85",
+                description="Right image boundary used by the line analyzer.",
             ),
             DeclareLaunchArgument(
                 "corner_min_turn_delta_deg",
