@@ -1551,6 +1551,15 @@ class Yolo26Detector(Node):
             heading = self._number(info, "filtered_heading_error_deg")
             if heading is None:
                 heading = self._number(info, "heading_error_deg")
+            recovery_target_angle = self._number(
+                info,
+                "filtered_recovery_target_angle_deg",
+            )
+            if recovery_target_angle is None:
+                recovery_target_angle = self._number(
+                    info,
+                    "recovery_target_angle_deg",
+                )
             offset = self._number(info, "filtered_lateral_offset_norm")
             if offset is None:
                 offset = self._number(info, "lateral_offset_norm")
@@ -1572,6 +1581,13 @@ class Yolo26Detector(Node):
                 "State       : TRACKING",
                 "Heading     : "
                 + self._metric_text(heading, "deg", 1, signed=True),
+                "Target angle: "
+                + self._metric_text(
+                    recovery_target_angle,
+                    "deg",
+                    1,
+                    signed=True,
+                ),
                 "Offset norm : "
                 + self._metric_text(offset, "", 3, signed=True),
                 "Curve turn : "
@@ -1698,6 +1714,8 @@ class Yolo26Detector(Node):
             )
             self._draw_line_heading_arrow(image, info, near)
 
+        self._draw_line_recovery_target(image, info, center_x)
+
         offset_px = self._number(info, "lateral_offset_px")
         if offset_px is not None:
             eval_y = int(height * 0.82)
@@ -1783,6 +1801,58 @@ class Yolo26Detector(Node):
             cv2.FONT_HERSHEY_SIMPLEX,
             0.58,
             (255, 0, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+    def _draw_line_recovery_target(
+        self,
+        image: np.ndarray,
+        info: dict[str, Any],
+        center_x: int,
+    ) -> None:
+        """Draw the robot-center-to-line point used for recovery turns."""
+        raw_target = info.get("recovery_target_point_px")
+        if not isinstance(raw_target, list) or len(raw_target) != 2:
+            return
+        try:
+            target_x = int(round(float(raw_target[0])))
+            target_y = int(round(float(raw_target[1])))
+        except (TypeError, ValueError):
+            return
+
+        height, width = image.shape[:2]
+        target = (
+            int(np.clip(target_x, 0, width - 1)),
+            int(np.clip(target_y, 0, height - 1)),
+        )
+        anchor = (center_x, height - 1)
+        color = (255, 200, 0)
+        cv2.arrowedLine(
+            image,
+            anchor,
+            target,
+            color,
+            4,
+            cv2.LINE_AA,
+            tipLength=0.08,
+        )
+        cv2.circle(image, target, 10, color, 3, cv2.LINE_AA)
+
+        angle = self._number(
+            info,
+            "filtered_recovery_target_angle_deg",
+        )
+        if angle is None:
+            angle = self._number(info, "recovery_target_angle_deg")
+        label = "TARGET" if angle is None else f"TARGET {angle:+.1f}deg"
+        cv2.putText(
+            image,
+            label,
+            (target[0] + 12, max(24, target[1] - 12)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.58,
+            color,
             2,
             cv2.LINE_AA,
         )

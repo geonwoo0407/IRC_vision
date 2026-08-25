@@ -388,6 +388,19 @@ class YoloLineAnalyzer(Node):
             0.82,
         )
 
+        # Recovery target band measured from the top of the image.
+        # Points between 55% and 75% are used, then the fitted line is
+        # evaluated at the farther (55%) edge of that band.
+        self.declare_parameter(
+            "recovery_target_y_min_ratio",
+            0.55,
+        )
+
+        self.declare_parameter(
+            "recovery_target_y_max_ratio",
+            0.75,
+        )
+
         # ====================================================
         # Quality calculation
         # ====================================================
@@ -628,6 +641,30 @@ class YoloLineAnalyzer(Node):
             ).value
         )
 
+        self.recovery_target_y_min_ratio = float(
+            np.clip(
+                float(
+                    self.get_parameter(
+                        "recovery_target_y_min_ratio"
+                    ).value
+                ),
+                0.0,
+                1.0,
+            )
+        )
+
+        self.recovery_target_y_max_ratio = float(
+            np.clip(
+                float(
+                    self.get_parameter(
+                        "recovery_target_y_max_ratio"
+                    ).value
+                ),
+                self.recovery_target_y_min_ratio,
+                1.0,
+            )
+        )
+
         self.good_rmse_px = float(
             self.get_parameter(
                 "good_rmse_px"
@@ -732,8 +769,13 @@ class YoloLineAnalyzer(Node):
             maxlen=self.filter_window_size
         )
 
+        self.recovery_target_angle_history: deque[float] = deque(
+            maxlen=self.filter_window_size
+        )
+
         self.filtered_heading: float | None = None
         self.filtered_offset: float | None = None
+        self.filtered_recovery_target_angle: float | None = None
 
         self.missed_line_frames = 0
 
@@ -2448,9 +2490,13 @@ class YoloLineAnalyzer(Node):
 
         self.offset_history.clear()
 
+        self.recovery_target_angle_history.clear()
+
         self.filtered_heading = None
 
         self.filtered_offset = None
+
+        self.filtered_recovery_target_angle = None
 
         self.missed_line_frames = 0
 
@@ -2475,6 +2521,7 @@ class YoloLineAnalyzer(Node):
         self,
         heading_deg: float,
         lateral_offset_norm: float,
+        recovery_target_angle_deg: float,
     ) -> dict[str, float | int | bool]:
         """
         Apply:
@@ -2504,6 +2551,12 @@ class YoloLineAnalyzer(Node):
             )
         )
 
+        self.recovery_target_angle_history.append(
+            float(
+                recovery_target_angle_deg
+            )
+        )
+
         heading_array = np.asarray(
             self.heading_history,
             dtype=np.float64,
@@ -2511,6 +2564,11 @@ class YoloLineAnalyzer(Node):
 
         offset_array = np.asarray(
             self.offset_history,
+            dtype=np.float64,
+        )
+
+        recovery_target_angle_array = np.asarray(
+            self.recovery_target_angle_history,
             dtype=np.float64,
         )
 
@@ -2523,6 +2581,12 @@ class YoloLineAnalyzer(Node):
         median_offset = float(
             np.median(
                 offset_array
+            )
+        )
+
+        median_recovery_target_angle = float(
+            np.median(
+                recovery_target_angle_array
             )
         )
 
@@ -2566,6 +2630,18 @@ class YoloLineAnalyzer(Node):
                 * self.filtered_offset
             )
 
+        if self.filtered_recovery_target_angle is None:
+            self.filtered_recovery_target_angle = (
+                median_recovery_target_angle
+            )
+        else:
+            self.filtered_recovery_target_angle = (
+                alpha
+                * median_recovery_target_angle
+                + (1.0 - alpha)
+                * self.filtered_recovery_target_angle
+            )
+
         self.missed_line_frames = 0
 
         return {
@@ -2575,6 +2651,9 @@ class YoloLineAnalyzer(Node):
             "median_lateral_offset_norm":
                 median_offset,
 
+            "median_recovery_target_angle_deg":
+                median_recovery_target_angle,
+
             "filtered_heading_error_deg":
                 float(
                     self.filtered_heading
@@ -2583,6 +2662,11 @@ class YoloLineAnalyzer(Node):
             "filtered_lateral_offset_norm":
                 float(
                     self.filtered_offset
+                ),
+
+            "filtered_recovery_target_angle_deg":
+                float(
+                    self.filtered_recovery_target_angle
                 ),
 
             "filter_ready":
@@ -2605,6 +2689,91 @@ class YoloLineAnalyzer(Node):
             self.image_width,
             self.robot_center_offset_px,
         )
+
+    def _calculate_recovery_target(
+        self,
+        points: list[LinePoint],
+        fallback_heading_deg: float,
+    ) -> dict[str, Any]:
+        """Calculate a robot-center-to-line target angle in the 55-75% band."""
+        image_height = float(self.image_height)
+        target_y = image_height * self.recovery_target_y_min_ratio
+        band_max_y = image_height * self.recovery_target_y_max_ratio
+        candidates = [
+            point
+            for point in points
+            if target_y <= point.y <= band_max_y
+        ]
+
+        target_x: float | None = None
+        source = "heading_fallback"
+        evaluated_y = target_y
+
+        candidate_y_span = (
+            max(point.y for point in candidates)
+            - min(point.y for point in candidates)
+            if candidates
+            else 0.0
+        )
+        if (
+            len(candidates) >= self.min_points_for_fit
+            and candidate_y_span >= self.min_segment_dy_px
+        ):
+            band_fit = self._robust_fit(
+                candidates,
+                require_y_span=False,
+            )
+            if band_fit is not None:
+                target_x = (
+                    band_fit.slope * target_y
+                    + band_fit.intercept
+                )
+                source = "band_fit"
+
+        if target_x is None and candidates:
+            selected = min(
+                candidates,
+                key=lambda point: abs(point.y - target_y),
+            )
+            target_x = selected.x
+            evaluated_y = selected.y
+            source = "band_point"
+
+        if target_x is None:
+            return {
+                "recovery_target_point_px": None,
+                "recovery_target_point_count": 0,
+                "recovery_target_source": source,
+                "recovery_target_angle_deg": float(fallback_heading_deg),
+            }
+
+        target_x = float(
+            np.clip(
+                target_x,
+                0.0,
+                max(0.0, float(self.image_width - 1)),
+            )
+        )
+        vertical_lookahead_px = max(
+            image_height - evaluated_y,
+            1e-6,
+        )
+        target_angle_deg = math.degrees(
+            math.atan2(
+                target_x - self._robot_center_x_px(),
+                vertical_lookahead_px,
+            )
+        )
+
+        return {
+            "recovery_target_point_px": [
+                int(round(target_x)),
+                int(round(evaluated_y)),
+            ],
+            "recovery_target_point_count": len(candidates),
+            "recovery_target_source": source,
+            "recovery_target_angle_deg": float(target_angle_deg),
+        }
 
     # ========================================================
     # Empty result
@@ -2670,6 +2839,18 @@ class YoloLineAnalyzer(Node):
             "heading_error_deg":
                 None,
 
+            "recovery_target_point_px":
+                None,
+
+            "recovery_target_point_count":
+                0,
+
+            "recovery_target_source":
+                None,
+
+            "recovery_target_angle_deg":
+                None,
+
             "near_heading_deg":
                 None,
 
@@ -2709,6 +2890,9 @@ class YoloLineAnalyzer(Node):
             "median_lateral_offset_norm":
                 None,
 
+            "median_recovery_target_angle_deg":
+                None,
+
             "filtered_heading_error_deg":
                 (
                     round(
@@ -2732,6 +2916,16 @@ class YoloLineAnalyzer(Node):
                         self.filtered_offset
                         is not None
                     )
+                    else None
+                ),
+
+            "filtered_recovery_target_angle_deg":
+                (
+                    round(
+                        self.filtered_recovery_target_angle,
+                        3,
+                    )
+                    if self.filtered_recovery_target_angle is not None
                     else None
                 ),
 
@@ -2957,6 +3151,18 @@ class YoloLineAnalyzer(Node):
         )
 
         # ----------------------------------------------------
+        # Offset-aware recovery target
+        # ----------------------------------------------------
+
+        recovery_target = self._calculate_recovery_target(
+            points,
+            heading_error,
+        )
+        recovery_target_angle = float(
+            recovery_target["recovery_target_angle_deg"]
+        )
+
+        # ----------------------------------------------------
         # Turn statistics
         # ----------------------------------------------------
 
@@ -3002,6 +3208,7 @@ class YoloLineAnalyzer(Node):
             self._update_temporal_filter(
                 heading_error,
                 lateral_offset_norm,
+                recovery_target_angle,
             )
         )
 
@@ -3084,6 +3291,8 @@ class YoloLineAnalyzer(Node):
                     heading_error,
                     3,
                 ),
+
+            **recovery_target,
 
             "near_heading_deg":
                 round(
@@ -3263,6 +3472,16 @@ class YoloLineAnalyzer(Node):
                     6,
                 ),
 
+            "median_recovery_target_angle_deg":
+                round(
+                    float(
+                        filter_result[
+                            "median_recovery_target_angle_deg"
+                        ]
+                    ),
+                    3,
+                ),
+
             # Recommended stabilized values for algorithm use.
             "filtered_heading_error_deg":
                 round(
@@ -3282,6 +3501,16 @@ class YoloLineAnalyzer(Node):
                         ]
                     ),
                     6,
+                ),
+
+            "filtered_recovery_target_angle_deg":
+                round(
+                    float(
+                        filter_result[
+                            "filtered_recovery_target_angle_deg"
+                        ]
+                    ),
+                    3,
                 ),
 
             "filter_ready":

@@ -27,6 +27,12 @@ def generate_launch_description() -> LaunchDescription:
     robot_center_offset_px = LaunchConfiguration(
         "robot_center_offset_px"
     )
+    recovery_target_y_min_ratio = LaunchConfiguration(
+        "recovery_target_y_min_ratio"
+    )
+    recovery_target_y_max_ratio = LaunchConfiguration(
+        "recovery_target_y_max_ratio"
+    )
 
     camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -70,7 +76,15 @@ def generate_launch_description() -> LaunchDescription:
                 "robot_center_offset_px": ParameterValue(
                     robot_center_offset_px,
                     value_type=float,
-                )
+                ),
+                "recovery_target_y_min_ratio": ParameterValue(
+                    recovery_target_y_min_ratio,
+                    value_type=float,
+                ),
+                "recovery_target_y_max_ratio": ParameterValue(
+                    recovery_target_y_max_ratio,
+                    value_type=float,
+                ),
             }
         ],
     )
@@ -133,6 +147,16 @@ def generate_launch_description() -> LaunchDescription:
                 "robot_center_offset_px",
                 default_value="70.0",
                 description="Robot center shift right from image midpoint.",
+            ),
+            DeclareLaunchArgument(
+                "recovery_target_y_min_ratio",
+                default_value="0.55",
+                description="Top edge of the recovery target point band.",
+            ),
+            DeclareLaunchArgument(
+                "recovery_target_y_max_ratio",
+                default_value="0.75",
+                description="Bottom edge of the recovery target point band.",
             ),
             camera,
             detector,

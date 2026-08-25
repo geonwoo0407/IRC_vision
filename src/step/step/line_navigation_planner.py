@@ -62,6 +62,7 @@ class NavigationCommand:
     offset_component_deg: float
     preview_component_deg: float
     heading_error_deg: float | None
+    recovery_target_angle_deg: float | None
     lateral_offset_norm: float | None
     preview_turn_deg: float | None
     line_quality: float
@@ -93,6 +94,10 @@ class NavigationCommand:
             "offset_component_deg": round(self.offset_component_deg, 3),
             "preview_component_deg": round(self.preview_component_deg, 3),
             "heading_error_deg": _round_optional(self.heading_error_deg, 3),
+            "recovery_target_angle_deg": _round_optional(
+                self.recovery_target_angle_deg,
+                3,
+            ),
             "lateral_offset_norm": _round_optional(
                 self.lateral_offset_norm, 6
             ),
@@ -202,6 +207,7 @@ class LineNavigationPlanner:
             offset_component_deg=0.0,
             preview_component_deg=0.0,
             heading_error_deg=None,
+            recovery_target_angle_deg=None,
             lateral_offset_norm=None,
             preview_turn_deg=None,
             line_quality=0.0,
@@ -226,6 +232,18 @@ class LineNavigationPlanner:
 
         if heading is None or offset is None:
             return self.stop("invalid_line_geometry")
+
+        recovery_target_angle = _number(
+            line_info,
+            "filtered_recovery_target_angle_deg",
+        )
+        if recovery_target_angle is None:
+            recovery_target_angle = _number(
+                line_info,
+                "recovery_target_angle_deg",
+            )
+        if recovery_target_angle is None:
+            recovery_target_angle = heading
 
         qualities = [
             _number(line_info, "heading_quality"),
@@ -278,7 +296,7 @@ class LineNavigationPlanner:
             if direction_is_ambiguous
             else self._classify_recovery(
                 offset,
-                heading,
+                recovery_target_angle,
                 curve_matches_heading,
             )
         )
@@ -286,6 +304,7 @@ class LineNavigationPlanner:
             return self._recovery_command(
                 recovery_motion,
                 heading,
+                recovery_target_angle,
                 offset,
                 quality,
             )
@@ -398,6 +417,7 @@ class LineNavigationPlanner:
             offset_component_deg=offset_component,
             preview_component_deg=preview_component,
             heading_error_deg=heading,
+            recovery_target_angle_deg=recovery_target_angle,
             lateral_offset_norm=offset,
             preview_turn_deg=curve_turn,
             line_quality=quality,
@@ -406,41 +426,15 @@ class LineNavigationPlanner:
     def _classify_recovery(
         self,
         lateral_offset_norm: float,
-        heading_error_deg: float,
+        recovery_target_angle_deg: float,
         curve_matches_heading: bool,
     ) -> str | None:
-        """Classify line side and required turn as separate recovery axes."""
-        is_recovering = self.previous_motion.startswith("RECOVER_")
-        threshold = (
-            self.config.recovery_exit_offset_norm
-            if is_recovering
-            else self.config.recovery_enter_offset_norm
-        )
-        inside_straight_corridor = bool(
-            abs(lateral_offset_norm)
-            <= self.config.recovery_straight_offset_norm
-        )
-        nearly_parallel = bool(
-            abs(heading_error_deg)
-            <= self.config.recovery_parallel_heading_deg
-        )
-        points_slightly_toward_line = bool(
-            lateral_offset_norm * heading_error_deg > 0.0
-            and abs(heading_error_deg)
-            < self.config.recovery_heading_turn_deg
-        )
+        """Quantize the robot-center-to-target angle into a recovery turn."""
         if (
-            inside_straight_corridor
-            and (nearly_parallel or points_slightly_toward_line)
+            abs(recovery_target_angle_deg)
+            < self.config.recovery_heading_turn_deg
+            or curve_matches_heading
         ):
-            return None
-
-        offset_requires_recovery = abs(lateral_offset_norm) > threshold
-        heading_requires_recovery = bool(
-            abs(heading_error_deg) >= self.config.recovery_heading_turn_deg
-            and not curve_matches_heading
-        )
-        if not offset_requires_recovery and not heading_requires_recovery:
             return None
 
         if lateral_offset_norm > 0.0:
@@ -448,23 +442,23 @@ class LineNavigationPlanner:
         elif lateral_offset_norm < 0.0:
             line_side = "LEFT"
         else:
-            line_side = "RIGHT" if heading_error_deg > 0.0 else "LEFT"
+            line_side = (
+                "RIGHT"
+                if recovery_target_angle_deg > 0.0
+                else "LEFT"
+            )
 
-        if heading_error_deg >= self.config.recovery_heading_turn_deg:
-            level = _recovery_turn_level(heading_error_deg)
+        if recovery_target_angle_deg > 0.0:
+            level = _recovery_turn_level(recovery_target_angle_deg)
             return f"RECOVER_{line_side}_TURN_RIGHT_{level}"
-        if heading_error_deg <= -self.config.recovery_heading_turn_deg:
-            level = _recovery_turn_level(heading_error_deg)
-            return f"RECOVER_{line_side}_TURN_LEFT_{level}"
-        # A lateral offset by itself must not emit a standalone recovery
-        # motion.  Numbered recovery turns are reserved for a heading error
-        # of at least ``recovery_heading_turn_deg``.
-        return None
+        level = _recovery_turn_level(recovery_target_angle_deg)
+        return f"RECOVER_{line_side}_TURN_LEFT_{level}"
 
     def _recovery_command(
         self,
         motion: str,
         heading: float,
+        recovery_target_angle: float,
         offset: float,
         quality: float,
     ) -> NavigationCommand:
@@ -503,6 +497,7 @@ class LineNavigationPlanner:
             offset_component_deg=self.config.offset_gain_deg * offset,
             preview_component_deg=0.0,
             heading_error_deg=heading,
+            recovery_target_angle_deg=recovery_target_angle,
             lateral_offset_norm=offset,
             preview_turn_deg=None,
             line_quality=quality,
