@@ -94,7 +94,7 @@ steering_error
 + preview_gain × far_turn
 ```
 
-명령은 `STRAIGHT`, `LEFT`, `RIGHT`, `RECOVER_*_TURN_LEFT/RIGHT_[1-6]`, `STOP`입니다. 단독 `RECOVER_LEFT/RIGHT`는 사용하지 않으며 offset만 큰 경우에는 `STRAIGHT`를 유지합니다. 로봇이 라인 오른쪽에 있으면 heading `-3~+10도`, 왼쪽에 있으면 `-10~+3도`, 중앙이면 `-10~+10도`를 STRAIGHT 범위로 사용합니다. 라인에서 더 멀어지는 방향은 3도부터, 반대 방향은 10도부터 복귀 회전을 시작하며 15도 단위의 여섯 모션으로 양자화합니다. quality가 낮거나 입력이 오래되면 STOP입니다.
+명령은 `STRAIGHT`, `LEFT`, `RIGHT`, `RECOVER_*_TURN_LEFT/RIGHT_[1-6]`, `STOP`입니다. 단독 `RECOVER_LEFT/RIGHT`는 사용하지 않으며 offset만 큰 경우에는 `STRAIGHT`를 유지합니다. 로봇이 라인 오른쪽에 있으면 heading `-3~+10도`, 왼쪽에 있으면 `-10~+3도`, 중앙이면 `-10~+10도`를 STRAIGHT 범위로 사용합니다. 라인에서 더 멀어지는 방향은 3도부터, 반대 방향은 10도부터 복귀 회전을 시작하며 15도 단위의 여섯 모션으로 양자화합니다. 신뢰할 수 있는 곡선과 heading 방향이 같으면 회전 중 offset은 `0.55` 미만까지 RECOVER를 덮어쓰지 않고 일반 LEFT/RIGHT를 유지합니다. quality가 낮거나 입력이 오래되면 STOP입니다.
 
 코너 준비는 heading이 아니라 경로의 각도 변화로만 검출합니다. 라인점 6개 이상, 전체 굽힘 `45도` 이상, 같은 방향 굽힘 구간 2개 이상, consistency `0.75` 이상, 유효 depth, 3프레임 연속 확인을 모두 요구합니다. 확정되면 굽기 직전 점까지의 depth에서 `0.15m` 여유를 빼고 기본 `0.05m` 직진보행 단위로 나눈 횟수를 `corner_straight_motion_count`에 제공합니다.
 

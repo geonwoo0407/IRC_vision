@@ -23,6 +23,7 @@ class NavigationConfig:
     recovery_turn_speed_rad_s: float = 0.22
     recovery_heading_turn_deg: float = 10.0
     recovery_away_heading_turn_deg: float = 3.0
+    curve_follow_max_offset_norm: float = 0.55
     recovery_straight_offset_norm: float = 0.45
     recovery_parallel_heading_deg: float = 2.0
     max_angular_speed_rad_s: float = 0.60
@@ -488,6 +489,12 @@ class LineNavigationPlanner:
             if is_recovering
             else self.config.recovery_enter_offset_norm
         )
+        if (
+            curve_matches_heading
+            and abs(lateral_offset_norm)
+            < self.config.curve_follow_max_offset_norm
+        ):
+            return None
         inside_straight_corridor = bool(
             abs(lateral_offset_norm)
             <= self.config.recovery_straight_offset_norm

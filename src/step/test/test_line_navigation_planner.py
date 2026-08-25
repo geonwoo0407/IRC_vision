@@ -410,6 +410,58 @@ def test_real_right_curve_emits_plain_right_without_far_fit():
     assert commands[-1].preview_turn_deg == 18.0
 
 
+@pytest.mark.parametrize(
+    ("offset", "heading", "curve_turn", "expected"),
+    [
+        (0.273, 6.3, 48.8, "RIGHT"),
+        (-0.273, -6.3, -48.8, "LEFT"),
+    ],
+)
+def test_matching_curve_ignores_normal_turn_induced_offset(
+    offset,
+    heading,
+    curve_turn,
+    expected,
+):
+    planner = LineNavigationPlanner(
+        NavigationConfig(direction_confirmation_frames=1)
+    )
+
+    command = planner.plan(
+        line_info(
+            filtered_lateral_offset_norm=offset,
+            filtered_heading_error_deg=heading,
+            turn_angle_deg=curve_turn,
+            turn_consistency=0.9,
+        ),
+        0.1,
+    )
+
+    assert command.motion == expected
+    assert not command.motion.startswith("RECOVER_")
+
+
+def test_matching_curve_does_not_hide_emergency_offset_recovery():
+    planner = LineNavigationPlanner(
+        NavigationConfig(
+            direction_confirmation_frames=1,
+            curve_follow_max_offset_norm=0.55,
+        )
+    )
+
+    command = planner.plan(
+        line_info(
+            filtered_lateral_offset_norm=0.56,
+            filtered_heading_error_deg=6.3,
+            turn_angle_deg=48.8,
+            turn_consistency=0.9,
+        ),
+        0.1,
+    )
+
+    assert command.motion == "RECOVER_RIGHT_TURN_RIGHT_1"
+
+
 @pytest.mark.parametrize("recovery_side", ["LEFT", "RIGHT"])
 @pytest.mark.parametrize("turn_direction", ["LEFT", "RIGHT"])
 def test_recovery_side_does_not_change_numbered_turn_motion(

@@ -27,6 +27,9 @@ def generate_launch_description() -> LaunchDescription:
     recovery_away_heading_turn_deg = LaunchConfiguration(
         "recovery_away_heading_turn_deg"
     )
+    curve_follow_max_offset_norm = LaunchConfiguration(
+        "curve_follow_max_offset_norm"
+    )
     robot_center_offset_px = LaunchConfiguration(
         "robot_center_offset_px"
     )
@@ -130,6 +133,10 @@ def generate_launch_description() -> LaunchDescription:
                     recovery_away_heading_turn_deg,
                     value_type=float,
                 ),
+                "curve_follow_max_offset_norm": ParameterValue(
+                    curve_follow_max_offset_norm,
+                    value_type=float,
+                ),
             }
         ],
     )
@@ -177,6 +184,14 @@ def generate_launch_description() -> LaunchDescription:
                 description=(
                     "Heading deadband when an off-center robot points "
                     "farther away from the line."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "curve_follow_max_offset_norm",
+                default_value="0.55",
+                description=(
+                    "Maximum offset that a reliable matching curve may "
+                    "override before recovery is allowed again."
                 ),
             ),
             DeclareLaunchArgument(

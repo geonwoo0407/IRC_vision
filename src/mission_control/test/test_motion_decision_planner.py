@@ -214,6 +214,28 @@ def test_away_heading_deadband_is_forwarded_to_line_planner():
     assert decision.action == "RECOVER_LEFT_TURN_LEFT_1"
 
 
+def test_matching_curve_offset_override_is_forwarded_to_line_planner():
+    planner = MotionDecisionPlanner(
+        MotionDecisionConfig(curve_follow_max_offset_norm=0.55)
+    )
+    line = line_info()
+    line["filtered_lateral_offset_norm"] = 0.273
+    line["filtered_heading_error_deg"] = 6.3
+    line["turn_angle_deg"] = 48.8
+    line["turn_consistency"] = 0.9
+
+    decisions = [
+        planner.plan(
+            "LINE_TRACK",
+            observations(line=line),
+            0.1,
+        )
+        for _ in range(3)
+    ]
+
+    assert decisions[-1].action == "RIGHT"
+
+
 def test_hurdle_without_depth_falls_back_to_line_direction():
     planner = MotionDecisionPlanner()
 

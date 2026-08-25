@@ -41,6 +41,7 @@ class MotionDecisionNode(Node):
         self.declare_parameter("enable_ball_lost_recovery", False)
         self.declare_parameter("recovery_heading_turn_deg", 10.0)
         self.declare_parameter("recovery_away_heading_turn_deg", 3.0)
+        self.declare_parameter("curve_follow_max_offset_norm", 0.55)
         self.declare_parameter("ball_tracking_range_m", 1.5)
         self.declare_parameter("ball_control_range_m", 0.9)
         self.declare_parameter("ball_lost_stop_sec", 0.35)
@@ -66,6 +67,9 @@ class MotionDecisionNode(Node):
                 ),
                 recovery_away_heading_turn_deg=self._float_parameter(
                     "recovery_away_heading_turn_deg"
+                ),
+                curve_follow_max_offset_norm=self._float_parameter(
+                    "curve_follow_max_offset_norm"
                 ),
                 enable_ball_lost_recovery=bool(
                     self.get_parameter(
