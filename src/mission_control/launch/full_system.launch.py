@@ -24,6 +24,9 @@ def generate_launch_description() -> LaunchDescription:
     recovery_heading_turn_deg = LaunchConfiguration(
         "recovery_heading_turn_deg"
     )
+    recovery_away_heading_turn_deg = LaunchConfiguration(
+        "recovery_away_heading_turn_deg"
+    )
     robot_center_offset_px = LaunchConfiguration(
         "robot_center_offset_px"
     )
@@ -109,6 +112,10 @@ def generate_launch_description() -> LaunchDescription:
                     recovery_heading_turn_deg,
                     value_type=float,
                 ),
+                "recovery_away_heading_turn_deg": ParameterValue(
+                    recovery_away_heading_turn_deg,
+                    value_type=float,
+                ),
             }
         ],
     )
@@ -149,6 +156,14 @@ def generate_launch_description() -> LaunchDescription:
                 "recovery_heading_turn_deg",
                 default_value="10.0",
                 description="Heading deadband before numbered recovery turns.",
+            ),
+            DeclareLaunchArgument(
+                "recovery_away_heading_turn_deg",
+                default_value="3.0",
+                description=(
+                    "Heading deadband when an off-center robot points "
+                    "farther away from the line."
+                ),
             ),
             DeclareLaunchArgument(
                 "robot_center_offset_px",

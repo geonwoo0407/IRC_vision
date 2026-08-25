@@ -22,6 +22,7 @@ class NavigationConfig:
     recovery_lateral_speed_mps: float = 0.025
     recovery_turn_speed_rad_s: float = 0.22
     recovery_heading_turn_deg: float = 10.0
+    recovery_away_heading_turn_deg: float = 3.0
     recovery_straight_offset_norm: float = 0.45
     recovery_parallel_heading_deg: float = 2.0
     max_angular_speed_rad_s: float = 0.60
@@ -495,20 +496,27 @@ class LineNavigationPlanner:
             abs(heading_error_deg)
             <= self.config.recovery_parallel_heading_deg
         )
-        points_slightly_toward_line = bool(
-            lateral_offset_norm * heading_error_deg > 0.0
-            and abs(heading_error_deg)
-            < self.config.recovery_heading_turn_deg
+        offset_requires_recovery = abs(lateral_offset_norm) > threshold
+        heading_points_away = bool(
+            offset_requires_recovery
+            and lateral_offset_norm * heading_error_deg > 0.0
+        )
+        active_heading_threshold = (
+            self.config.recovery_away_heading_turn_deg
+            if heading_points_away
+            else self.config.recovery_heading_turn_deg
+        )
+        inside_active_heading_deadband = bool(
+            abs(heading_error_deg) < active_heading_threshold
         )
         if (
             inside_straight_corridor
-            and (nearly_parallel or points_slightly_toward_line)
+            and (nearly_parallel or inside_active_heading_deadband)
         ):
             return None
 
-        offset_requires_recovery = abs(lateral_offset_norm) > threshold
         heading_requires_recovery = bool(
-            abs(heading_error_deg) >= self.config.recovery_heading_turn_deg
+            abs(heading_error_deg) >= active_heading_threshold
             and not curve_matches_heading
         )
         if not offset_requires_recovery and not heading_requires_recovery:
@@ -521,15 +529,15 @@ class LineNavigationPlanner:
         else:
             line_side = "RIGHT" if heading_error_deg > 0.0 else "LEFT"
 
-        if heading_error_deg >= self.config.recovery_heading_turn_deg:
+        if heading_error_deg >= active_heading_threshold:
             level = _recovery_turn_level(heading_error_deg)
             return f"RECOVER_{line_side}_TURN_RIGHT_{level}"
-        if heading_error_deg <= -self.config.recovery_heading_turn_deg:
+        if heading_error_deg <= -active_heading_threshold:
             level = _recovery_turn_level(heading_error_deg)
             return f"RECOVER_{line_side}_TURN_LEFT_{level}"
         # A lateral offset by itself must not emit a standalone recovery
         # motion.  Numbered recovery turns are reserved for a heading error
-        # of at least ``recovery_heading_turn_deg``.
+        # of at least the active side-aware heading threshold.
         return None
 
     def _recovery_command(

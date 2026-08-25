@@ -265,7 +265,7 @@ def test_moderate_offset_and_parallel_line_can_continue_straight():
     assert command.motion == "STRAIGHT"
 
 
-def test_moderate_offset_heading_toward_line_stays_straight():
+def test_robot_right_of_line_pointing_farther_right_recovers_at_three_deg():
     planner = LineNavigationPlanner()
 
     command = planner.plan(
@@ -277,8 +277,41 @@ def test_moderate_offset_heading_toward_line_stays_straight():
         0.1,
     )
 
-    assert command.motion == "STRAIGHT"
-    assert command.angular_speed_rad_s == 0.0
+    assert command.motion == "RECOVER_LEFT_TURN_LEFT_1"
+    assert command.angular_speed_rad_s < 0.0
+
+
+@pytest.mark.parametrize(
+    ("offset", "heading", "expected"),
+    [
+        (-0.30, -2.999, "STRAIGHT"),
+        (-0.30, -3.0, "RECOVER_LEFT_TURN_LEFT_1"),
+        (-0.30, 9.999, "STRAIGHT"),
+        (-0.30, 10.0, "RECOVER_LEFT_TURN_RIGHT_1"),
+        (0.30, -9.999, "STRAIGHT"),
+        (0.30, -10.0, "RECOVER_RIGHT_TURN_LEFT_1"),
+        (0.30, 2.999, "STRAIGHT"),
+        (0.30, 3.0, "RECOVER_RIGHT_TURN_RIGHT_1"),
+    ],
+)
+def test_off_center_robot_uses_asymmetric_heading_deadband(
+    offset,
+    heading,
+    expected,
+):
+    planner = LineNavigationPlanner()
+
+    command = planner.plan(
+        line_info(
+            filtered_lateral_offset_norm=offset,
+            filtered_heading_error_deg=heading,
+            turn_angle_deg=None,
+            turn_consistency=None,
+        ),
+        0.1,
+    )
+
+    assert command.motion == expected
 
 
 @pytest.mark.parametrize(

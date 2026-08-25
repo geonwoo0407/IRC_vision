@@ -510,7 +510,7 @@ valid_for_sec                수신 측 watchdog 유효시간
 
 라인 미검출, 낮은 quality, 잘못된 값 또는 입력 timeout이면 `valid=false`, `motion=STOP`을 발행합니다. 기본 최대 선속도는 기존 휴머노이드 nominal speed에 맞춘 `0.05m/s`이며, 급커브일수록 자동 감속합니다. 로봇 실측에 맞춰 다음처럼 파라미터를 조정할 수 있습니다.
 
-라인 중심 offset만 큰 경우에는 단독 `RECOVER_LEFT/RIGHT`를 발행하지 않고 `STRAIGHT`를 유지합니다. 근거리 heading 절댓값이 `10도` 이상이고 실제 곡선 방향과 일치하지 않을 때만 `RECOVER_*_TURN_LEFT/RIGHT_1~6`을 발행합니다. `RECOVER_LEFT/RIGHT` 부분은 라인이 있는 쪽이고, 실제 회전 방향은 `TURN_LEFT/RIGHT`입니다. 회전은 카메라 중심선과 근거리 라인 사이의 heading 절댓값을 기준으로 `15`, `30`, `45`, `60`, `75`, `90`도의 6단계로 양자화합니다. 경계는 `10~22.5도 미만`, `22.5~37.5`, `37.5~52.5`, `52.5~67.5`, `67.5~82.5`, `82.5도 이상`이며 각 경계값은 다음 단계에 포함됩니다.
+라인 중심 offset만 큰 경우에는 단독 `RECOVER_LEFT/RIGHT`를 발행하지 않고 `STRAIGHT`를 유지합니다. 로봇이 라인 오른쪽에 있을 때의 STRAIGHT heading 범위는 `-3~+10도`, 로봇이 라인 왼쪽에 있을 때는 `-10~+3도`입니다. 즉 라인에서 더 멀어지는 방향은 기본 `3도`, 라인 쪽으로 돌아오는 방향은 `10도`부터 번호형 복귀 회전을 시작합니다. 중앙에서는 기존 `-10~+10도`를 유지합니다. `RECOVER_LEFT/RIGHT` 부분은 라인이 있는 쪽이고, 실제 회전 방향은 `TURN_LEFT/RIGHT`입니다. 회전은 카메라 중심선과 근거리 라인 사이의 heading 절댓값을 기준으로 `15`, `30`, `45`, `60`, `75`, `90`도의 6단계로 양자화합니다. 첫 단계는 위치와 진행 방향에 따라 `3도` 또는 `10도`부터 `22.5도` 미만까지이며, 이후 경계는 `22.5`, `37.5`, `52.5`, `67.5`, `82.5도`입니다.
 
 일반 `LEFT/RIGHT` 명령은 heading이나 offset만으로는 발행하지 않습니다. 먼 경로의 turn angle 또는 구간별 signed path turn이 `8도` 이상이고 consistency가 `0.55` 이상이며 조향 방향과 일치할 때만 발행합니다. 따라서 기울어진 일자 라인은 일반 `RIGHT`가 아니라 `STRAIGHT` 또는 필요한 경우 `RECOVER_*`로 처리하고, 실제 우회전 곡선에서만 일반 `RIGHT`를 발행합니다.
 
@@ -531,6 +531,7 @@ ros2 run step line_navigation_controller --ros-args \
 ```bash
 ros2 launch mission_control full_system.launch.py \
   recovery_heading_turn_deg:=10.0 \
+  recovery_away_heading_turn_deg:=3.0 \
   corner_min_turn_delta_deg:=45.0 \
   corner_straight_motion_distance_m:=0.05 \
   corner_turn_margin_m:=0.15

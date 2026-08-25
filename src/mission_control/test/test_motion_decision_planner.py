@@ -197,6 +197,23 @@ def test_recovery_heading_deadband_is_configurable():
     assert decision.action == "STRAIGHT"
 
 
+def test_away_heading_deadband_is_forwarded_to_line_planner():
+    planner = MotionDecisionPlanner(
+        MotionDecisionConfig(recovery_away_heading_turn_deg=3.0)
+    )
+    line = line_info()
+    line["filtered_lateral_offset_norm"] = -0.30
+    line["filtered_heading_error_deg"] = -3.0
+
+    decision = planner.plan(
+        "LINE_TRACK",
+        observations(line=line),
+        0.1,
+    )
+
+    assert decision.action == "RECOVER_LEFT_TURN_LEFT_1"
+
+
 def test_hurdle_without_depth_falls_back_to_line_direction():
     planner = MotionDecisionPlanner()
 
