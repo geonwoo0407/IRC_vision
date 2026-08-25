@@ -397,37 +397,6 @@ def test_numbered_recovery_does_not_fall_back_to_standalone_recovery():
     assert no_turn_heading.motion == "STRAIGHT"
 
 
-@pytest.mark.parametrize(
-    ("offset", "target_angle", "expected"),
-    [
-        (-0.411, -33.0, "RECOVER_LEFT_TURN_LEFT_2"),
-        (0.411, 33.0, "RECOVER_RIGHT_TURN_RIGHT_2"),
-    ],
-)
-def test_numbered_recovery_uses_robot_center_target_angle(
-    offset,
-    target_angle,
-    expected,
-):
-    planner = LineNavigationPlanner()
-
-    command = planner.plan(
-        line_info(
-            filtered_heading_error_deg=-10.6 if offset < 0.0 else 10.6,
-            filtered_lateral_offset_norm=offset,
-            filtered_recovery_target_angle_deg=target_angle,
-            turn_angle_deg=0.0,
-        ),
-        0.1,
-    )
-
-    assert command.motion == expected
-    assert command.recovery_target_angle_deg == pytest.approx(target_angle)
-    assert command.to_dict()["recovery_target_angle_deg"] == pytest.approx(
-        target_angle
-    )
-
-
 def test_small_or_inconsistent_far_curve_is_not_used_early():
     planner = LineNavigationPlanner()
 

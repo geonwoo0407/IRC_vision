@@ -93,7 +93,7 @@ steering_error
 + preview_gain × far_turn
 ```
 
-명령은 `STRAIGHT`, `LEFT`, `RIGHT`, `RECOVER_*_TURN_LEFT/RIGHT_[1-6]`, `STOP`입니다. 단독 `RECOVER_LEFT/RIGHT`는 사용하지 않습니다. 번호형 복귀 회전은 화면 높이 `55~75%` 구간의 라인점을 피팅한 뒤, 로봇 하단 중심에서 피팅선의 `55%` 지점을 바라보는 목표각을 15도 단위 여섯 모션으로 양자화합니다. 구간점이 하나면 해당 점, 없으면 기존 heading을 사용합니다. quality가 낮거나 입력이 오래되면 STOP입니다.
+명령은 `STRAIGHT`, `LEFT`, `RIGHT`, `RECOVER_*_TURN_LEFT/RIGHT_[1-6]`, `STOP`입니다. 단독 `RECOVER_LEFT/RIGHT`는 사용하지 않으며 offset만 큰 경우에는 `STRAIGHT`를 유지합니다. 복귀 회전은 카메라 중심선 대비 근거리 line heading을 15도 단위의 여섯 모션으로 양자화합니다. quality가 낮거나 입력이 오래되면 STOP입니다.
 
 ### 화면
 
@@ -103,7 +103,6 @@ line planner 선택 시 YOLO bbox 라벨 대신 다음을 표시합니다.
 - 경로점 번호와 NEAR/FAR
 - 카메라 중앙선
 - heading 화살표
-- 복귀 목표점과 target angle 화살표
 - lateral offset
 - 실제 planner action과 quality
 
