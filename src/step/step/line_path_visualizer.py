@@ -30,7 +30,7 @@ OpenCV window showing:
 - Connected path polyline
 - Immediate heading arrow
 - Lateral offset
-- Final tracking or RECOVER_LEFT / RECOVER_RIGHT decision
+- Final tracking or numbered RECOVER_*_TURN_* decision
 - Target linear/angular speed, travel distance, and rotation
 - Compact steering calculation inputs
 
@@ -1012,8 +1012,6 @@ class LinePathVisualizer(Node):
             "STRAIGHT": (0, 220, 0),
             "LEFT": (255, 160, 0),
             "RIGHT": (0, 165, 255),
-            "RECOVER_LEFT": (255, 255, 0),
-            "RECOVER_RIGHT": (255, 255, 0),
             "STOP": (0, 0, 255),
         }.get(motion, (180, 180, 180))
 

@@ -139,29 +139,27 @@ def test_turn_requires_three_consecutive_frames():
 
 
 @pytest.mark.parametrize(
-    ("offset", "expected", "lateral_sign"),
+    ("offset", "heading"),
     [
-        (0.55, "RECOVER_RIGHT", 1),
-        (-0.55, "RECOVER_LEFT", -1),
+        (0.55, 0.0),
+        (-0.55, 0.0),
+        (-0.237, 5.0),
+        (0.237, -5.0),
     ],
 )
-def test_large_offset_creates_separate_recovery_command(
-    offset,
-    expected,
-    lateral_sign,
-):
+def test_large_offset_without_turn_heading_stays_straight(offset, heading):
     planner = LineNavigationPlanner()
 
     command = planner.plan(
-        line_info(filtered_lateral_offset_norm=offset),
+        line_info(
+            filtered_lateral_offset_norm=offset,
+            filtered_heading_error_deg=heading,
+        ),
         0.1,
     )
 
-    assert command.motion == expected
-    assert command.reason == "line_center_recovery"
-    assert command.linear_speed_mps == 0.0
-    assert command.lateral_speed_mps * lateral_sign > 0.0
-    assert command.lateral_travel_distance_m * lateral_sign > 0.0
+    assert command.motion == "STRAIGHT"
+    assert not command.motion.startswith("RECOVER_")
 
 
 @pytest.mark.parametrize(
@@ -380,25 +378,23 @@ def test_recovery_side_does_not_change_numbered_turn_motion(
     )
 
 
-def test_recovery_uses_exit_threshold_before_returning_to_tracking():
+def test_numbered_recovery_does_not_fall_back_to_standalone_recovery():
     planner = LineNavigationPlanner()
 
     first = planner.plan(
-        line_info(filtered_lateral_offset_norm=0.55),
+        line_info(
+            filtered_lateral_offset_norm=0.55,
+            filtered_heading_error_deg=-30.0,
+        ),
         0.1,
     )
-    held = planner.plan(
+    no_turn_heading = planner.plan(
         line_info(filtered_lateral_offset_norm=0.50),
         0.1,
     )
-    released = planner.plan(
-        line_info(filtered_lateral_offset_norm=0.10),
-        0.1,
-    )
 
-    assert first.motion == "RECOVER_RIGHT"
-    assert held.motion == "RECOVER_RIGHT"
-    assert released.motion == "STRAIGHT"
+    assert first.motion == "RECOVER_RIGHT_TURN_LEFT_2"
+    assert no_turn_heading.motion == "STRAIGHT"
 
 
 def test_small_or_inconsistent_far_curve_is_not_used_early():

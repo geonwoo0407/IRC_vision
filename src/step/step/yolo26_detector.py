@@ -1218,8 +1218,6 @@ class Yolo26Detector(Node):
             "STRAIGHT": "STRAIGHT",
             "LEFT": "LEFT",
             "RIGHT": "RIGHT",
-            "RECOVER_LEFT": "RECOVER LINE LEFT",
-            "RECOVER_RIGHT": "RECOVER LINE RIGHT",
             "RECOVER_LEFT_TURN_LEFT": "RECOVER LEFT / TURN LEFT",
             "RECOVER_LEFT_TURN_RIGHT": "RECOVER LEFT / TURN RIGHT",
             "RECOVER_RIGHT_TURN_LEFT": "RECOVER RIGHT / TURN LEFT",

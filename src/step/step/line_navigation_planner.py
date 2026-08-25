@@ -456,7 +456,10 @@ class LineNavigationPlanner:
         if heading_error_deg <= -self.config.recovery_heading_turn_deg:
             level = _recovery_turn_level(heading_error_deg)
             return f"RECOVER_{line_side}_TURN_LEFT_{level}"
-        return f"RECOVER_{line_side}"
+        # A lateral offset by itself must not emit a standalone recovery
+        # motion.  Numbered recovery turns are reserved for a heading error
+        # of at least ``recovery_heading_turn_deg``.
+        return None
 
     def _recovery_command(
         self,
