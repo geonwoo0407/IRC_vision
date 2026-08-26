@@ -13,6 +13,10 @@ from .approach_distance import approach_motion_for_distance
 
 RECOVERY_TURN_STEP_DEG = 15
 RECOVERY_TURN_MAX_LEVEL = 6
+RECOVERY_TURN_ACTION_SUFFIXES = {
+    "LEFT": (2, 4, 6, 8, 10, 13),
+    "RIGHT": (4, 6, 8, 10, 12, 15),
+}
 
 
 @dataclass(frozen=True)
@@ -170,6 +174,15 @@ def _recovery_turn_level(heading_error_deg: float) -> int:
     return int(_clamp(level, 1, RECOVERY_TURN_MAX_LEVEL))
 
 
+def _recovery_turn_action_suffix(
+    heading_error_deg: float,
+    turn_direction: str,
+) -> int:
+    """Map the nearest 15-degree level to the deployed action suffix."""
+    level = _recovery_turn_level(heading_error_deg)
+    return RECOVERY_TURN_ACTION_SUFFIXES[turn_direction][level - 1]
+
+
 def _recovery_motion_metadata(
     motion: str,
 ) -> tuple[str | None, str | None, int | None, float | None]:
@@ -186,18 +199,20 @@ def _recovery_motion_metadata(
         marker = f"_TURN_{turn_direction}_"
         if marker not in normalized:
             continue
-        level_text = normalized.rsplit(marker, 1)[1]
+        suffix_text = normalized.rsplit(marker, 1)[1]
         try:
-            level = int(level_text)
+            suffix = int(suffix_text)
         except ValueError:
             return recovery_side, None, None, None
-        if not 1 <= level <= RECOVERY_TURN_MAX_LEVEL:
+        supported_suffixes = RECOVERY_TURN_ACTION_SUFFIXES[turn_direction]
+        if suffix not in supported_suffixes:
             return recovery_side, None, None, None
-        angle_deg = sign * level * RECOVERY_TURN_STEP_DEG
+        angle_level = supported_suffixes.index(suffix) + 1
+        angle_deg = sign * angle_level * RECOVERY_TURN_STEP_DEG
         return (
             recovery_side,
-            f"TURN_{turn_direction}_{level}",
-            level,
+            f"TURN_{turn_direction}_{suffix}",
+            suffix,
             float(angle_deg),
         )
     return recovery_side, None, None, None
@@ -211,6 +226,11 @@ class LineNavigationPlanner:
         self.previous_motion = "STOP"
         self.previous_angular_speed_rad_s = 0.0
         self.turn_candidate: str | None = None
+        self.turn_candidate_hits = 0
+
+    def _reset_turn_state(self) -> None:
+        """Reset confirmation state used by production Vision replay."""
+        self.turn_candidate = None
         self.turn_candidate_hits = 0
 
     def stop(self, reason: str) -> NavigationCommand:
@@ -551,11 +571,17 @@ class LineNavigationPlanner:
             line_side = "RIGHT" if heading_error_deg > 0.0 else "LEFT"
 
         if heading_error_deg >= active_heading_threshold:
-            level = _recovery_turn_level(heading_error_deg)
-            return f"RECOVER_{line_side}_TURN_RIGHT_{level}"
+            suffix = _recovery_turn_action_suffix(
+                heading_error_deg,
+                "RIGHT",
+            )
+            return f"RECOVER_{line_side}_TURN_RIGHT_{suffix}"
         if heading_error_deg <= -active_heading_threshold:
-            level = _recovery_turn_level(heading_error_deg)
-            return f"RECOVER_{line_side}_TURN_LEFT_{level}"
+            suffix = _recovery_turn_action_suffix(
+                heading_error_deg,
+                "LEFT",
+            )
+            return f"RECOVER_{line_side}_TURN_LEFT_{suffix}"
         # A lateral offset by itself must not emit a standalone recovery
         # motion.  Numbered recovery turns are reserved for a heading error
         # of at least the active side-aware heading threshold.
