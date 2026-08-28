@@ -111,6 +111,18 @@ def test_ball_outside_90cm_control_range_does_not_move_robot():
     assert command.reason == "ball_outside_control_range"
 
 
+def test_confirmed_ball_confidence_gate_matches_analyzer_default():
+    """Accept the analyzer threshold and reject a score just below it."""
+    planner = BallNavigationPlanner()
+
+    accepted = planner.plan(ball_info(confidence=0.45), 0.1)
+    rejected = planner.plan(ball_info(confidence=0.449), 0.1)
+
+    assert accepted.valid is True
+    assert rejected.valid is False
+    assert rejected.reason == "low_ball_confidence"
+
+
 def test_turn_hysteresis_holds_until_exit_threshold():
     planner = BallNavigationPlanner()
 

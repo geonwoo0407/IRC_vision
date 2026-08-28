@@ -15,7 +15,9 @@ from .approach_distance import approach_motion_for_distance
 class BallNavigationConfig:
     """Tunable limits for ball alignment and approach commands."""
 
-    min_confidence: float = 0.55
+    # Match BallAnalyzer's confirmed-target gate so an accepted ball does not
+    # immediately turn into a low-confidence STOP at the planner boundary.
+    min_confidence: float = 0.45
     max_linear_speed_mps: float = 0.04
     min_linear_speed_mps: float = 0.012
     max_angular_speed_rad_s: float = 0.50

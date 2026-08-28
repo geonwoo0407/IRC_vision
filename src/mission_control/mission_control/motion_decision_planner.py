@@ -47,7 +47,7 @@ class MotionDecision:
 class MotionDecisionConfig:
     """Tunable mission-selection and lost-ball recovery limits."""
 
-    enable_ball_lost_recovery: bool = False
+    enable_ball_lost_recovery: bool = True
     recovery_heading_turn_deg: float = 10.0
     recovery_away_heading_turn_deg: float = 3.0
     curve_follow_max_offset_norm: float = 0.55
@@ -57,6 +57,11 @@ class MotionDecisionConfig:
     ball_recovery_timeout_sec: float = 8.0
     ball_recovery_turn_rad_s: float = 0.22
     ball_recovery_command_sec: float = 0.40
+    ball_recovery_initial_turn_max_sec: float = 2.0
+    ball_recovery_forward_sec: float = 0.40
+    ball_recovery_forward_min_depth_m: float = 0.35
+    ball_recovery_forward_max_bearing_deg: float = 25.0
+    ball_recovery_sweep_sec: float = 1.20
     ball_recovery_direction_deadband_deg: float = 1.0
     ball_reacquire_center_deg: float = 5.0
     ball_reacquire_center_norm: float = 0.08
@@ -109,7 +114,9 @@ class MotionDecisionPlanner:
         self.ball_lost_elapsed_sec = 0.0
         self.last_ball_bearing_deg: float | None = None
         self.last_ball_offset_x_norm: float | None = None
+        self.last_ball_depth_m: float | None = None
         self.last_ball_turn_direction = "RIGHT"
+        self.ball_recovery_timed_out = False
         self.ball_lock_active = False
         self.ball_terminal_requested = False
         self.ball_ignore_until_clear = False
@@ -330,6 +337,7 @@ class MotionDecisionPlanner:
             self.ball_lock_active = False
             self.ball_terminal_requested = False
             self.ball_ignore_until_clear = True
+            self._clear_ball_tracking()
         if (
             self.goal_lock_active
             and self.goal_terminal_requested
@@ -537,6 +545,7 @@ class MotionDecisionPlanner:
         if (
             info is not None
             and info.get("note") == "ball_outside_tracking_range"
+            and not self.ball_lock_active
         ):
             self._clear_ball_tracking()
             return
@@ -551,6 +560,9 @@ class MotionDecisionPlanner:
                 self.last_ball_bearing_deg = bearing
             if offset is not None:
                 self.last_ball_offset_x_norm = offset
+            depth = self._ball_range_m(info)
+            if bool(info.get("depth_valid", False)) and depth is not None:
+                self.last_ball_depth_m = depth
 
             direction_value = bearing
             if direction_value is None and offset is not None:
@@ -566,11 +578,12 @@ class MotionDecisionPlanner:
             if (
                 bool(info.get("depth_valid", False))
                 and ball_range is not None
-                and ball_range <= self.config.ball_tracking_range_m
+                and ball_range <= self.config.ball_control_range_m
             ):
                 self.ball_tracking_active = True
             if self.ball_tracking_active:
                 self.ball_lost_elapsed_sec = 0.0
+                self.ball_recovery_timed_out = False
                 if self.ball_recovery_centering and self._ball_is_centered(
                     info
                 ):
@@ -585,35 +598,82 @@ class MotionDecisionPlanner:
             self.ball_lost_elapsed_sec
             > self.config.ball_recovery_timeout_sec
         ):
-            self._clear_ball_tracking()
+            self.ball_recovery_timed_out = True
 
     def _lost_ball_recovery_command(self) -> dict[str, Any]:
-        """Stop first, then rotate toward the last observed ball side."""
-        direction = self.last_ball_turn_direction
-        stopping = (
-            self.ball_lost_elapsed_sec <= self.config.ball_lost_stop_sec
-        )
-        if stopping:
-            motion = "BALL_LOST_STOP"
-            angular_speed = 0.0
-            reason = "ball_lost_stop_before_search"
-        else:
-            motion = f"RECOVER_TURN_{direction}"
-            sign = 1.0 if direction == "RIGHT" else -1.0
-            angular_speed = sign * self.config.ball_recovery_turn_rad_s
-            reason = "turn_toward_last_seen_ball_side"
-
+        """Search from the last ball pose without returning to line mode."""
+        elapsed = self.ball_lost_elapsed_sec
+        stop_sec = self.config.ball_lost_stop_sec
         duration = self.config.ball_recovery_command_sec
+        direction = self.last_ball_turn_direction
+        motion = "BALL_LOST_STOP"
+        reason = "ball_lost_stop_before_search"
+        recovery_phase = "STOP"
+        valid = True
+        linear_speed = 0.0
+        angular_speed = 0.0
+
+        if self.ball_recovery_timed_out:
+            reason = "ball_recovery_timeout"
+            recovery_phase = "TIMEOUT"
+            valid = False
+        elif elapsed > stop_sec:
+            search_elapsed = elapsed - stop_sec
+            last_error = self._last_ball_direction_error_deg()
+            initial_turn_sec = self._ball_initial_recovery_turn_sec(
+                last_error
+            )
+            if search_elapsed <= initial_turn_sec:
+                motion = f"RECOVER_TURN_{direction}"
+                angular_speed = self._ball_recovery_turn_speed(direction)
+                reason = "turn_toward_last_seen_ball_side"
+                recovery_phase = "LAST_DIRECTION"
+            else:
+                search_elapsed -= initial_turn_sec
+                forward_allowed = bool(
+                    last_error is not None
+                    and abs(last_error)
+                    <= self.config.ball_recovery_forward_max_bearing_deg
+                    and self.last_ball_depth_m is not None
+                    and self.last_ball_depth_m
+                    >= self.config.ball_recovery_forward_min_depth_m
+                    and self.last_ball_depth_m
+                    <= self.config.ball_control_range_m
+                )
+                forward_sec = (
+                    self.config.ball_recovery_forward_sec
+                    if forward_allowed
+                    else 0.0
+                )
+                if search_elapsed <= forward_sec:
+                    motion = "STRAIGHT_1"
+                    linear_speed = 0.012
+                    reason = "advance_toward_last_seen_ball"
+                    recovery_phase = "FORWARD"
+                else:
+                    search_elapsed -= forward_sec
+                    sweep_sec = max(
+                        self.config.ball_recovery_sweep_sec,
+                        duration,
+                    )
+                    sweep_index = int(search_elapsed // sweep_sec)
+                    if sweep_index % 2 == 1:
+                        direction = self._opposite_direction(direction)
+                    motion = f"RECOVER_TURN_{direction}"
+                    angular_speed = self._ball_recovery_turn_speed(direction)
+                    reason = "alternating_ball_search"
+                    recovery_phase = "SWEEP"
+
         return {
-            "valid": True,
+            "valid": valid,
             "motion": motion,
             "reason": reason,
-            "linear_speed_mps": 0.0,
+            "linear_speed_mps": linear_speed,
             "lateral_speed_mps": 0.0,
             "angular_speed_rad_s": round(angular_speed, 4),
             "angular_accel_rad_s2": 0.0,
             "command_duration_sec": round(duration, 3),
-            "travel_distance_m": 0.0,
+            "travel_distance_m": round(linear_speed * duration, 4),
             "lateral_travel_distance_m": 0.0,
             "target_heading_change_deg": round(
                 math.degrees(angular_speed * duration),
@@ -631,7 +691,44 @@ class MotionDecisionPlanner:
             "tracking_active": True,
             "lost_elapsed_sec": round(self.ball_lost_elapsed_sec, 3),
             "last_seen_direction": direction,
+            "last_seen_depth_m": self.last_ball_depth_m,
+            "recovery_phase": recovery_phase,
         }
+
+    def _last_ball_direction_error_deg(self) -> float | None:
+        """Return the last horizontal ball error in degrees."""
+        if self.last_ball_bearing_deg is not None:
+            return self.last_ball_bearing_deg
+        if self.last_ball_offset_x_norm is None:
+            return None
+        return self.last_ball_offset_x_norm * 35.0
+
+    def _ball_initial_recovery_turn_sec(
+        self,
+        error_deg: float | None,
+    ) -> float:
+        """Estimate a bounded turn time toward the last observed bearing."""
+        if (
+            error_deg is None
+            or abs(error_deg) <= self.config.ball_reacquire_center_deg
+        ):
+            return 0.0
+        turn_speed = max(abs(self.config.ball_recovery_turn_rad_s), 1e-3)
+        estimated = abs(math.radians(error_deg)) / turn_speed
+        return min(
+            max(estimated, self.config.ball_recovery_command_sec),
+            self.config.ball_recovery_initial_turn_max_sec,
+        )
+
+    def _ball_recovery_turn_speed(self, direction: str) -> float:
+        """Return signed recovery yaw speed for one direction."""
+        sign = 1.0 if direction == "RIGHT" else -1.0
+        return sign * self.config.ball_recovery_turn_rad_s
+
+    @staticmethod
+    def _opposite_direction(direction: str) -> str:
+        """Return the opposite horizontal search direction."""
+        return "LEFT" if direction == "RIGHT" else "RIGHT"
 
     def _ball_is_centered(self, info: dict[str, Any] | None) -> bool:
         bearing = self._number(info, "bearing_deg")
@@ -696,6 +793,8 @@ class MotionDecisionPlanner:
         self.ball_lost_elapsed_sec = 0.0
         self.last_ball_bearing_deg = None
         self.last_ball_offset_x_norm = None
+        self.last_ball_depth_m = None
+        self.ball_recovery_timed_out = False
 
     def ball_tracking_status(self) -> dict[str, Any]:
         """Expose remembered-ball state for debugging and behavior logs."""
@@ -707,7 +806,9 @@ class MotionDecisionPlanner:
             "lost_elapsed_sec": round(self.ball_lost_elapsed_sec, 3),
             "last_bearing_deg": self.last_ball_bearing_deg,
             "last_offset_x_norm": self.last_ball_offset_x_norm,
+            "last_depth_m": self.last_ball_depth_m,
             "last_direction": self.last_ball_turn_direction,
+            "timed_out": self.ball_recovery_timed_out,
         }
 
     @staticmethod

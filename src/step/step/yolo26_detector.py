@@ -139,6 +139,9 @@ class Yolo26Detector(Node):
         self.declare_parameter("motion_command_timeout_sec", 0.8)
         self.declare_parameter("metrics_mode", "auto")
         self.declare_parameter("confidence_threshold", 0.25)
+        # Keep the global threshold conservative while allowing the smaller,
+        # intermittently occluded ball to survive a slightly lower score.
+        self.declare_parameter("ball_confidence_threshold", 0.20)
         self.declare_parameter("max_detections", 300)
         self.declare_parameter("max_fps", 15.0)
         self.declare_parameter("device", "auto")
@@ -153,6 +156,9 @@ class Yolo26Detector(Node):
         ).expanduser()
         self.confidence_threshold = float(
             self.get_parameter("confidence_threshold").value
+        )
+        self.ball_confidence_threshold = float(
+            self.get_parameter("ball_confidence_threshold").value
         )
         self.max_detections = int(
             self.get_parameter("max_detections").value
@@ -246,6 +252,10 @@ class Yolo26Detector(Node):
             )
         if not 0.0 <= self.confidence_threshold <= 1.0:
             raise ValueError("confidence_threshold must be between 0 and 1")
+        if not 0.0 <= self.ball_confidence_threshold <= 1.0:
+            raise ValueError(
+                "ball_confidence_threshold must be between 0 and 1"
+            )
 
         self.bridge = CvBridge()
         self.session: ort.InferenceSession | None = None
@@ -1131,14 +1141,19 @@ class Yolo26Detector(Node):
         detections: list[Detection] = []
         for prediction in predictions[: self.max_detections]:
             confidence = float(prediction[4])
-            if confidence < self.confidence_threshold:
-                continue
-
             class_id = int(round(float(prediction[5])))
             if not 0 <= class_id < len(self.class_names):
                 self.get_logger().warning(
                     f"Ignoring invalid class id: {class_id}"
                 )
+                continue
+            class_name = self.class_names[class_id]
+            confidence_threshold = (
+                self.ball_confidence_threshold
+                if class_name == "ball"
+                else self.confidence_threshold
+            )
+            if confidence < confidence_threshold:
                 continue
 
             x1, y1, x2, y2 = (float(value) for value in prediction[:4])
@@ -1157,7 +1172,7 @@ class Yolo26Detector(Node):
             detections.append(
                 Detection(
                     class_id=class_id,
-                    class_name=self.class_names[class_id],
+                    class_name=class_name,
                     confidence=confidence,
                     bbox=[left, top, right, bottom],
                     center=[(left + right) // 2, (top + bottom) // 2],
@@ -1430,6 +1445,13 @@ class Yolo26Detector(Node):
 
         info = self._fresh_ball_info()
         decision = self._fresh_motion_command()
+        source_command = (
+            decision.get("source_command", {})
+            if decision is not None
+            else {}
+        )
+        if not isinstance(source_command, dict):
+            source_command = {}
         if decision is None:
             planner_action = "NO COMMAND"
         else:
@@ -1507,6 +1529,25 @@ class Yolo26Detector(Node):
                 f"Planner     : {planner_action}",
                 f"State       : {state}",
             ]
+            if bool(source_command.get("tracking_active", False)):
+                recovery_phase = str(
+                    source_command.get("recovery_phase", "SEARCH")
+                ).upper()
+                last_direction = str(
+                    source_command.get("last_seen_direction", "UNKNOWN")
+                ).upper()
+                last_depth = self._number(
+                    source_command,
+                    "last_seen_depth_m",
+                )
+                rows.extend(
+                    [
+                        f"Recovery    : {recovery_phase}",
+                        f"Last side   : {last_direction}",
+                        "Last depth  : "
+                        + self._metric_text(last_depth, "m"),
+                    ]
+                )
         else:
             distance = self._number(info, "distance_m")
             depth = self._number(info, "depth_m")
@@ -1556,6 +1597,15 @@ class Yolo26Detector(Node):
             str(decision.get("action", "")) if decision is not None else ""
         )
         banner = self._action_banner(decision_source, decision_action)
+        recovery_phase = str(
+            source_command.get("recovery_phase", "")
+        ).upper()
+        if recovery_phase == "STOP":
+            banner = ("BALL LOST / HOLD", (0, 105, 190))
+        elif recovery_phase == "FORWARD":
+            banner = ("FIND BALL FORWARD", (0, 105, 190))
+        elif recovery_phase == "TIMEOUT":
+            banner = ("BALL SEARCH TIMEOUT", (0, 70, 180))
         if banner is None and detected and info is not None:
             if bool(info.get("pickup_now")):
                 banner = ("PICK UP BALL", (0, 120, 0))
@@ -2398,14 +2448,18 @@ class Yolo26Detector(Node):
             if decision is not None
             else ""
         )
+        source_command = (
+            decision.get("source_command", {})
+            if decision is not None
+            else {}
+        )
+        if not isinstance(source_command, dict):
+            source_command = {}
         ball_recovery = (
             metrics_mode == "ball"
             and decision_source == "ball"
             and not ball_detected
-            and (
-                decision_action == "BALL_LOST_STOP"
-                or decision_action.startswith("RECOVER_TURN_")
-            )
+            and bool(source_command.get("tracking_active", False))
         )
         goal_recovery = (
             metrics_mode == "goal"

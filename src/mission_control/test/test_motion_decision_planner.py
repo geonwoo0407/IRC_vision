@@ -115,7 +115,7 @@ def observations(**overrides):
 
 
 def recovery_planner():
-    """Create a planner with the currently disabled legacy recovery enabled."""
+    """Create a planner with ball recovery explicitly enabled."""
     return MotionDecisionPlanner(
         MotionDecisionConfig(enable_ball_lost_recovery=True)
     )
@@ -444,7 +444,7 @@ def test_ball_leaving_tracking_range_clears_recovery_memory():
     assert planner.ball_tracking_active is False
 
 
-def test_missing_ball_stays_locked_and_does_not_use_line():
+def test_missing_ball_stays_locked_and_starts_default_recovery():
     planner = MotionDecisionPlanner()
     planner.plan(
         "AUTO",
@@ -462,10 +462,10 @@ def test_missing_ball_stays_locked_and_does_not_use_line():
     )
 
     assert decision.source == "ball"
-    assert decision.action == "STOP"
-    assert decision.reason == "ball_not_detected"
-    assert planner.ball_tracking_active is False
-    assert planner.ball_recovery_centering is False
+    assert decision.action == "BALL_LOST_STOP"
+    assert decision.reason == "ball_lost_stop_before_search"
+    assert planner.ball_tracking_active is True
+    assert planner.ball_recovery_centering is True
 
 
 def test_90cm_takeover_uses_depth_not_hypotenuse_distance():
@@ -529,6 +529,95 @@ def test_lost_tracked_ball_stops_then_turns_toward_last_seen_side():
     assert turning.action == "RECOVER_TURN_RIGHT"
     assert turning.source_command["linear_speed_mps"] == 0.0
     assert turning.source_command["angular_speed_rad_s"] > 0.0
+
+
+def test_centered_lost_ball_advances_once_before_sweeping():
+    planner = recovery_planner()
+    planner.plan(
+        "AUTO",
+        observations(
+            line=line_info(),
+            ball=ball_info(
+                depth_m=0.60,
+                distance_m=0.60,
+                bearing_deg=0.0,
+            ),
+        ),
+        0.1,
+    )
+
+    forward = planner.plan(
+        "AUTO",
+        observations(line=line_info(), ball={"detected": False}),
+        0.4,
+    )
+    first_sweep = planner.plan(
+        "AUTO",
+        observations(line=line_info(), ball={"detected": False}),
+        0.5,
+    )
+    opposite_sweep = planner.plan(
+        "AUTO",
+        observations(line=line_info(), ball={"detected": False}),
+        1.2,
+    )
+
+    assert forward.action == "STRAIGHT_1"
+    assert forward.reason == "advance_toward_last_seen_ball"
+    assert forward.source_command["recovery_phase"] == "FORWARD"
+    assert first_sweep.action == "RECOVER_TURN_RIGHT"
+    assert first_sweep.reason == "alternating_ball_search"
+    assert opposite_sweep.action == "RECOVER_TURN_LEFT"
+
+
+def test_close_lost_ball_does_not_blindly_advance():
+    planner = recovery_planner()
+    planner.plan(
+        "AUTO",
+        observations(
+            line=line_info(),
+            ball=ball_info(
+                depth_m=0.20,
+                distance_m=0.20,
+                bearing_deg=0.0,
+            ),
+        ),
+        0.1,
+    )
+
+    decision = planner.plan(
+        "AUTO",
+        observations(line=line_info(), ball={"detected": False}),
+        0.4,
+    )
+
+    assert decision.action == "RECOVER_TURN_RIGHT"
+    assert decision.reason == "alternating_ball_search"
+
+
+def test_ball_recovery_timeout_stays_locked_and_stops_safely():
+    planner = recovery_planner()
+    planner.plan(
+        "AUTO",
+        observations(
+            line=line_info(),
+            ball=ball_info(depth_m=0.60, distance_m=0.60),
+        ),
+        0.1,
+    )
+
+    decision = planner.plan(
+        "AUTO",
+        observations(line=line_info(), ball={"detected": False}),
+        8.1,
+    )
+
+    assert decision.source == "ball"
+    assert decision.action == "BALL_LOST_STOP"
+    assert decision.reason == "ball_recovery_timeout"
+    assert decision.valid is False
+    assert planner.ball_lock_active is True
+    assert planner.ball_tracking_active is True
 
 
 def test_blocking_hurdle_interrupts_ball_recovery_turn():

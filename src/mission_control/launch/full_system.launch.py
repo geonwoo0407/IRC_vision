@@ -24,6 +24,9 @@ def generate_launch_description() -> LaunchDescription:
         "publish_annotated_image"
     )
     initial_mission_phase = LaunchConfiguration("initial_mission_phase")
+    enable_ball_lost_recovery = LaunchConfiguration(
+        "enable_ball_lost_recovery"
+    )
     recovery_heading_turn_deg = LaunchConfiguration(
         "recovery_heading_turn_deg"
     )
@@ -153,6 +156,10 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[
             {
                 "initial_mission_phase": initial_mission_phase,
+                "enable_ball_lost_recovery": ParameterValue(
+                    enable_ball_lost_recovery,
+                    value_type=bool,
+                ),
                 "recovery_heading_turn_deg": ParameterValue(
                     recovery_heading_turn_deg,
                     value_type=float,
@@ -205,6 +212,14 @@ def generate_launch_description() -> LaunchDescription:
                 "initial_mission_phase",
                 default_value="AUTO",
                 description="Initial planner phase before /mission/phase is received.",
+            ),
+            DeclareLaunchArgument(
+                "enable_ball_lost_recovery",
+                default_value="true",
+                description=(
+                    "Keep ball ownership and search from its last pose when "
+                    "detection is lost."
+                ),
             ),
             DeclareLaunchArgument(
                 "recovery_heading_turn_deg",
