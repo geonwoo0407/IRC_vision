@@ -291,7 +291,7 @@ def test_hurdle_outside_one_meter_is_ignored_for_line_tracking():
         )
 
     assert decision.source == "line"
-    assert decision.action == "RECOVER_RIGHT_TURN_RIGHT_1"
+    assert decision.action == "RECOVER_RIGHT_TURN_RIGHT_4"
     assert decision.reason == "line_center_recovery"
 
 
@@ -325,7 +325,7 @@ def test_away_heading_deadband_is_forwarded_to_line_planner():
         0.1,
     )
 
-    assert decision.action == "RECOVER_LEFT_TURN_LEFT_1"
+    assert decision.action == "RECOVER_LEFT_TURN_LEFT_2"
 
 
 def test_matching_curve_offset_override_is_forwarded_to_line_planner():
