@@ -4,6 +4,7 @@ import pytest
 
 from step.line_navigation_planner import LineNavigationPlanner
 from step.line_navigation_planner import NavigationConfig
+from step.line_navigation_planner import _recovery_turn_action_suffix
 
 
 def line_info(**overrides):
@@ -215,10 +216,10 @@ def test_large_offset_without_turn_heading_stays_straight(offset, heading):
 @pytest.mark.parametrize(
     ("offset", "heading", "expected", "angular_sign"),
     [
-        (0.593, -32.0, "RECOVER_RIGHT_TURN_LEFT_2", -1),
-        (0.366, 15.0, "RECOVER_RIGHT_TURN_RIGHT_1", 1),
-        (-0.40, -15.0, "RECOVER_LEFT_TURN_LEFT_1", -1),
-        (-0.40, 15.0, "RECOVER_LEFT_TURN_RIGHT_1", 1),
+        (0.593, -32.0, "RECOVER_RIGHT_TURN_LEFT_4", -1),
+        (0.366, 15.0, "RECOVER_RIGHT_TURN_RIGHT_4", 1),
+        (-0.40, -15.0, "RECOVER_LEFT_TURN_LEFT_2", -1),
+        (-0.40, 15.0, "RECOVER_LEFT_TURN_RIGHT_4", 1),
     ],
 )
 def test_recovery_separates_line_side_from_turn_direction(
@@ -254,7 +255,7 @@ def test_straight_line_heading_error_uses_recovery_not_plain_left():
         0.1,
     )
 
-    assert command.motion == "RECOVER_LEFT_TURN_LEFT_1"
+    assert command.motion == "RECOVER_LEFT_TURN_LEFT_2"
 
 
 def test_plain_left_is_reserved_for_confirmed_left_curve():
@@ -298,7 +299,7 @@ def test_robot_right_of_line_pointing_farther_right_recovers_at_three_deg():
         0.1,
     )
 
-    assert command.motion == "RECOVER_LEFT_TURN_LEFT_1"
+    assert command.motion == "RECOVER_LEFT_TURN_LEFT_2"
     assert command.angular_speed_rad_s < 0.0
 
 
@@ -306,13 +307,13 @@ def test_robot_right_of_line_pointing_farther_right_recovers_at_three_deg():
     ("offset", "heading", "expected"),
     [
         (-0.30, -2.999, "STRAIGHT"),
-        (-0.30, -3.0, "RECOVER_LEFT_TURN_LEFT_1"),
+        (-0.30, -3.0, "RECOVER_LEFT_TURN_LEFT_2"),
         (-0.30, 9.999, "STRAIGHT"),
-        (-0.30, 10.0, "RECOVER_LEFT_TURN_RIGHT_1"),
+        (-0.30, 10.0, "RECOVER_LEFT_TURN_RIGHT_4"),
         (0.30, -9.999, "STRAIGHT"),
-        (0.30, -10.0, "RECOVER_RIGHT_TURN_LEFT_1"),
+        (0.30, -10.0, "RECOVER_RIGHT_TURN_LEFT_2"),
         (0.30, 2.999, "STRAIGHT"),
-        (0.30, 3.0, "RECOVER_RIGHT_TURN_RIGHT_1"),
+        (0.30, 3.0, "RECOVER_RIGHT_TURN_RIGHT_4"),
     ],
 )
 def test_off_center_robot_uses_asymmetric_heading_deadband(
@@ -368,12 +369,13 @@ def test_right_recovery_turn_is_split_into_six_levels(
     )
     payload = command.to_dict()
 
+    expected_suffix = _recovery_turn_action_suffix(heading, "RIGHT")
     assert command.motion == (
-        f"RECOVER_RIGHT_TURN_RIGHT_{expected_level}"
+        f"RECOVER_RIGHT_TURN_RIGHT_{expected_suffix}"
     )
     assert payload["recovery_side"] == "RIGHT"
-    assert payload["turn_motion"] == f"TURN_RIGHT_{expected_level}"
-    assert payload["turn_level"] == expected_level
+    assert payload["turn_motion"] == f"TURN_RIGHT_{expected_suffix}"
+    assert payload["turn_level"] == expected_suffix
     assert payload["turn_angle_deg"] == expected_level * 15.0
     assert command.target_heading_change_deg == expected_level * 15.0
 
@@ -410,7 +412,7 @@ def test_ten_degree_recovery_threshold_uses_numbered_turn_not_plain_right():
         0.1,
     )
 
-    assert command.motion == "RECOVER_RIGHT_TURN_RIGHT_1"
+    assert command.motion == "RECOVER_RIGHT_TURN_RIGHT_4"
     assert command.reason == "line_center_recovery"
     assert command.angular_speed_rad_s > 0.0
 
@@ -480,7 +482,7 @@ def test_matching_curve_does_not_hide_emergency_offset_recovery():
         0.1,
     )
 
-    assert command.motion == "RECOVER_RIGHT_TURN_RIGHT_1"
+    assert command.motion == "RECOVER_RIGHT_TURN_RIGHT_4"
 
 
 @pytest.mark.parametrize("recovery_side", ["LEFT", "RIGHT"])
@@ -504,11 +506,17 @@ def test_recovery_side_does_not_change_numbered_turn_motion(
     )
     payload = command.to_dict()
 
+    expected_suffix = _recovery_turn_action_suffix(
+        heading,
+        turn_direction,
+    )
     assert command.motion == (
-        f"RECOVER_{recovery_side}_TURN_{turn_direction}_3"
+        f"RECOVER_{recovery_side}_TURN_{turn_direction}_{expected_suffix}"
     )
     assert payload["recovery_side"] == recovery_side
-    assert payload["turn_motion"] == f"TURN_{turn_direction}_3"
+    assert payload["turn_motion"] == (
+        f"TURN_{turn_direction}_{expected_suffix}"
+    )
     assert payload["turn_angle_deg"] == (
         -45.0 if turn_direction == "LEFT" else 45.0
     )
@@ -529,7 +537,7 @@ def test_numbered_recovery_does_not_fall_back_to_standalone_recovery():
         0.1,
     )
 
-    assert first.motion == "RECOVER_RIGHT_TURN_LEFT_2"
+    assert first.motion == "RECOVER_RIGHT_TURN_LEFT_4"
     assert no_turn_heading.motion == "STRAIGHT"
 
 

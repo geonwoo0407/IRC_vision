@@ -715,7 +715,13 @@ ros2 topic echo /navigation/ball_command
 추후 behavior/FSM이 공 미션일 때만 선택해야 합니다. 매핑 및 위치추정
 코드와는 연결하지 않았습니다.
 
-### 공 거리 우선순위와 비활성화된 분실 복구
+공은 원시 YOLO confidence `0.20` 이상부터 화면과 detections에 남기고,
+ball analyzer에서는 `0.45` 이상인 동일 위치 후보가 40프레임 중 24회
+관측되어야 확정합니다. 확정 이력은 연속 6프레임 누락까지 유지하므로
+짧은 검출 흔들림에는 빠르게 재확정하면서 단발성 오탐은 모드 전환에
+사용하지 않습니다. 다른 클래스의 원시 confidence 기준은 `0.25`입니다.
+
+### 공 거리 우선순위와 분실 복구
 
 통합 `motion_decision_node`는 공을 처음 보았다는 이유만으로 라인보다
 공을 우선하지 않습니다. 현재 거리 기반 전환 순서는 다음과 같습니다.
@@ -725,18 +731,32 @@ ros2 topic echo /navigation/ball_command
 공 검출, 거리 1.5m 초과         → 분석·화면·모드 선택에서 무시
 공 검출, 0.90m < Depth <= 1.5m → TRACK ONLY, line 주행 유지
 공 검출, Depth <= 0.90m        → ball planner로 전환
-공이 화면에서 사라짐             → 즉시 line 판단으로 복귀
+ball 전환 전 공이 사라짐         → line 주행 유지
+ball 전환 후 공이 사라짐         → ball lock 유지, 분실 복구 실행
 ```
 
 0.90m 공 제어 전환은 화면의 `Depth Z`와 동일한 `depth_m`을 기준으로
-판단합니다. 테스트 중 공이 화면에서 사라질 때마다 제자리 탐색하는 것을
-막기 위해 `enable_ball_lost_recovery=false`가 기본값입니다. 나중에
-복구 전략이 확정되면 `true`로 다시 켤 수 있으며 관련 설정은
-`motion_decision_node`의
+판단합니다. `enable_ball_lost_recovery=true`가 기본값이며, 공 모드 진입
+후 검출을 놓치면 다음 순서로 복구합니다.
+
+```text
+0.35초                         → 일시 정지, 검출 흔들림 대기
+마지막 bearing이 중앙 밖        → 마지막 방향으로 제한 회전
+마지막 Depth 0.35~0.90m         → STRAIGHT_1 한 구간 전진
+계속 미검출                     → 마지막 방향/반대 방향 교대 회전
+8초 초과                       → ball lock을 유지하며 안전 정지
+```
+
+공이 너무 가까웠거나 마지막 bearing이 25도를 넘으면 블라인드 전진을
+생략합니다. 허들은 복구보다 우선하므로 제어 범위의 확정 허들이 나타나면
+공 탐색을 중단합니다. 관련 설정은 `motion_decision_node`의
 `ball_tracking_range_m`, `ball_control_range_m`, `ball_lost_stop_sec`,
 `ball_recovery_timeout_sec`, `ball_recovery_turn_rad_s`,
-`ball_reacquire_center_deg`, `ball_reacquire_center_norm` 파라미터로
-조정할 수 있습니다.
+`ball_recovery_initial_turn_max_sec`, `ball_recovery_forward_sec`,
+`ball_recovery_forward_min_depth_m`,
+`ball_recovery_forward_max_bearing_deg`, `ball_recovery_sweep_sec`,
+`ball_reacquire_center_deg`, `ball_reacquire_center_norm` 파라미터로 조정할
+수 있습니다.
 
 ## 골대 분석과 SDK 행동 신호
 
@@ -933,7 +953,7 @@ HurdleAnalyzer
 
 1.0m 안에서 확정된 허들이 보이면 공·골대·라인보다 hurdle planner를 먼저 선택하고 HURDLE 상태를 잠급니다. 라인점은 허들 교차 기준점 계산에만 사용합니다. 허들 bbox 중심이나 line planner 명령은 사용하지 않으며, `GO` 이후 SDK 완료와 다음 명시적 미션 단계가 확인될 때만 잠금을 해제합니다.
 
-공은 0.90m, 골대는 0.50m 제어 범위에 들어오면 각각 BALL/GOAL 상태를 잠급니다. 잠금 뒤 객체가 잠깐 사라져도 line planner로 되돌아가지 않고 해당 미션의 STOP/WAIT 또는 재탐색만 사용합니다. `PICKUP_NOW`/`SHOT` 완료 뒤 다음 미션 단계가 명시적으로 들어와야 잠금을 해제합니다.
+공은 0.90m, 골대는 0.50m 제어 범위에 들어오면 각각 BALL/GOAL 상태를 잠급니다. 잠금 뒤 객체가 잠깐 사라져도 line planner로 되돌아가지 않습니다. 공은 마지막 위치 기반 전진·회전 재탐색, 골대는 STOP/WAIT 또는 회전 재탐색을 사용합니다. `PICKUP_NOW`/`SHOT` 완료 뒤 다음 미션 단계가 명시적으로 들어와야 잠금을 해제합니다.
 
 모든 입력은 기본 0.5초 timeout을 사용합니다. 오래된 정보는 선택 대상에서 제외하므로 멈춘 analyzer의 마지막 검출값으로 계속 움직이는 것을 방지합니다.
 
@@ -951,7 +971,7 @@ sdk_motion_requested        단발 SDK 요청; 조건 진입 첫 프레임만 tr
 request_latched             단발 이벤트 조건이 현재 유지 중인지 여부
 sdk_motion_id               현재 null; C++ SDK 계약 후 설정
 input_age_sec               네 입력 토픽의 최신 데이터 나이
-ball_tracking               현재 기본 비활성; 향후 분실 복구용 상태
+ball_tracking               공 분실 시간, 마지막 bearing/depth, 복구 단계
 goal_tracking               1.0m backboard 기억, 분실 시간, 마지막 좌우 방향
 ```
 

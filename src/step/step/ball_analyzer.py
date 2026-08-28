@@ -124,7 +124,11 @@ class BallAnalyzer(Node):
         )
         self.declare_parameter("output_topic", "/vision/ball_info")
         self.declare_parameter("ball_class_name", "ball")
-        self.declare_parameter("min_confidence", 0.55)
+        # The detector already applies a raw ball threshold.  This higher
+        # analyzer gate, combined with spatial/temporal confirmation, accepts
+        # brief score dips without allowing one-frame false positives to own
+        # the mission.
+        self.declare_parameter("min_confidence", 0.45)
         self.declare_parameter("depth_timeout_sec", 0.7)
         self.declare_parameter("depth_window_px", 9)
         self.declare_parameter("max_valid_depth_m", 4.0)
@@ -138,11 +142,11 @@ class BallAnalyzer(Node):
         self.declare_parameter("pickup_y_tolerance_ratio", 0.12)
         self.declare_parameter("horizontal_deadband_px", 20)
         self.declare_parameter("center_tolerance_px", 140)
-        # At the 30 FPS competition setting this requires about one second of
+        # At the 30 FPS competition setting this requires about 0.8 seconds of
         # spatially consistent detection before ball_info becomes detected.
         self.declare_parameter("confirmation_window_size", 40)
-        self.declare_parameter("confirmation_required_hits", 30)
-        self.declare_parameter("confirmation_max_missed_frames", 2)
+        self.declare_parameter("confirmation_required_hits", 24)
+        self.declare_parameter("confirmation_max_missed_frames", 6)
         self.declare_parameter("confirmation_max_center_shift_norm", 0.18)
         self.declare_parameter("confirmation_min_area_ratio", 0.40)
         self.declare_parameter("pickup_confirmation_window_size", 5)

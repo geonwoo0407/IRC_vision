@@ -38,7 +38,7 @@ class MotionDecisionNode(Node):
         self.declare_parameter("ball_timeout_sec", 0.50)
         self.declare_parameter("goal_timeout_sec", 0.50)
         self.declare_parameter("hurdle_timeout_sec", 0.50)
-        self.declare_parameter("enable_ball_lost_recovery", False)
+        self.declare_parameter("enable_ball_lost_recovery", True)
         self.declare_parameter("recovery_heading_turn_deg", 10.0)
         self.declare_parameter("recovery_away_heading_turn_deg", 3.0)
         self.declare_parameter("curve_follow_max_offset_norm", 0.55)
@@ -48,6 +48,14 @@ class MotionDecisionNode(Node):
         self.declare_parameter("ball_recovery_timeout_sec", 8.0)
         self.declare_parameter("ball_recovery_turn_rad_s", 0.22)
         self.declare_parameter("ball_recovery_command_sec", 0.40)
+        self.declare_parameter("ball_recovery_initial_turn_max_sec", 2.0)
+        self.declare_parameter("ball_recovery_forward_sec", 0.40)
+        self.declare_parameter("ball_recovery_forward_min_depth_m", 0.35)
+        self.declare_parameter(
+            "ball_recovery_forward_max_bearing_deg",
+            25.0,
+        )
+        self.declare_parameter("ball_recovery_sweep_sec", 1.20)
         self.declare_parameter("ball_reacquire_center_deg", 5.0)
         self.declare_parameter("ball_reacquire_center_norm", 0.08)
         self.declare_parameter("goal_tracking_range_m", 1.0)
@@ -93,6 +101,21 @@ class MotionDecisionNode(Node):
                 ),
                 ball_recovery_command_sec=self._float_parameter(
                     "ball_recovery_command_sec"
+                ),
+                ball_recovery_initial_turn_max_sec=self._float_parameter(
+                    "ball_recovery_initial_turn_max_sec"
+                ),
+                ball_recovery_forward_sec=self._float_parameter(
+                    "ball_recovery_forward_sec"
+                ),
+                ball_recovery_forward_min_depth_m=self._float_parameter(
+                    "ball_recovery_forward_min_depth_m"
+                ),
+                ball_recovery_forward_max_bearing_deg=self._float_parameter(
+                    "ball_recovery_forward_max_bearing_deg"
+                ),
+                ball_recovery_sweep_sec=self._float_parameter(
+                    "ball_recovery_sweep_sec"
                 ),
                 ball_reacquire_center_deg=self._float_parameter(
                     "ball_reacquire_center_deg"

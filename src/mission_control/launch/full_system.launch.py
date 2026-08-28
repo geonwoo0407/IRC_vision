@@ -6,8 +6,10 @@ from launch.actions import DeclareLaunchArgument
 from launch.actions import IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import EnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -20,10 +22,25 @@ def generate_launch_description() -> LaunchDescription:
     display = LaunchConfiguration("display")
     metrics_mode = LaunchConfiguration("metrics_mode")
     max_fps = LaunchConfiguration("max_fps")
+    camera_topic_prefix = LaunchConfiguration("camera_topic_prefix")
+
+    color_image_topic = PythonExpression(
+        ["'", camera_topic_prefix, "/color/image_raw'"]
+    )
+    aligned_depth_topic = PythonExpression(
+        ["'", camera_topic_prefix, "/aligned_depth_to_color/image_raw'"]
+    )
+    color_camera_info_topic = PythonExpression(
+        ["'", camera_topic_prefix, "/color/camera_info'"]
+    )
+
     publish_annotated_image = LaunchConfiguration(
         "publish_annotated_image"
     )
     initial_mission_phase = LaunchConfiguration("initial_mission_phase")
+    enable_ball_lost_recovery = LaunchConfiguration(
+        "enable_ball_lost_recovery"
+    )
     recovery_heading_turn_deg = LaunchConfiguration(
         "recovery_heading_turn_deg"
     )
@@ -89,6 +106,10 @@ def generate_launch_description() -> LaunchDescription:
                 "display": ParameterValue(display, value_type=bool),
                 "metrics_mode": metrics_mode,
                 "max_fps": ParameterValue(max_fps, value_type=float),
+                "image_topic": ParameterValue(
+                    color_image_topic,
+                    value_type=str,
+                ),
                 "publish_annotated_image": ParameterValue(
                     publish_annotated_image,
                     value_type=bool,
@@ -104,6 +125,18 @@ def generate_launch_description() -> LaunchDescription:
         emulate_tty=True,
         parameters=[
             {
+                "image_topic": ParameterValue(
+                    color_image_topic,
+                    value_type=str,
+                ),
+                "depth_topic": ParameterValue(
+                    aligned_depth_topic,
+                    value_type=str,
+                ),
+                "camera_info_topic": ParameterValue(
+                    color_camera_info_topic,
+                    value_type=str,
+                ),
                 "robot_center_offset_px": ParameterValue(
                     robot_center_offset_px,
                     value_type=float,
@@ -153,6 +186,10 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[
             {
                 "initial_mission_phase": initial_mission_phase,
+                "enable_ball_lost_recovery": ParameterValue(
+                    enable_ball_lost_recovery,
+                    value_type=bool,
+                ),
                 "recovery_heading_turn_deg": ParameterValue(
                     recovery_heading_turn_deg,
                     value_type=float,
@@ -197,6 +234,17 @@ def generate_launch_description() -> LaunchDescription:
                 description="Maximum detector processing rate.",
             ),
             DeclareLaunchArgument(
+                "camera_topic_prefix",
+                default_value=EnvironmentVariable(
+                    "IRC_CAMERA_TOPIC_PREFIX",
+                    default_value="/camera/camera",
+                ),
+                description=(
+                    "RealSense topic prefix. "
+                    "PC=/camera, Jetson=/camera/camera."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "publish_annotated_image",
                 default_value="false",
                 description="Publish the annotated YOLO image ROS topic.",
@@ -205,6 +253,14 @@ def generate_launch_description() -> LaunchDescription:
                 "initial_mission_phase",
                 default_value="AUTO",
                 description="Initial planner phase before /mission/phase is received.",
+            ),
+            DeclareLaunchArgument(
+                "enable_ball_lost_recovery",
+                default_value="true",
+                description=(
+                    "Keep ball ownership and search from its last pose when "
+                    "detection is lost."
+                ),
             ),
             DeclareLaunchArgument(
                 "recovery_heading_turn_deg",

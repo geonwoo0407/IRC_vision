@@ -29,6 +29,8 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
+from step.tensorrt_backend import TensorRTBackend
+
 
 def _default_model_path() -> str:
     """Return the installed model, with a source-tree development fallback."""
@@ -137,6 +139,9 @@ class Yolo26Detector(Node):
         self.declare_parameter("motion_command_timeout_sec", 0.8)
         self.declare_parameter("metrics_mode", "auto")
         self.declare_parameter("confidence_threshold", 0.25)
+        # Keep the global threshold conservative while allowing the smaller,
+        # intermittently occluded ball to survive a slightly lower score.
+        self.declare_parameter("ball_confidence_threshold", 0.20)
         self.declare_parameter("max_detections", 300)
         self.declare_parameter("max_fps", 15.0)
         self.declare_parameter("device", "auto")
@@ -151,6 +156,9 @@ class Yolo26Detector(Node):
         ).expanduser()
         self.confidence_threshold = float(
             self.get_parameter("confidence_threshold").value
+        )
+        self.ball_confidence_threshold = float(
+            self.get_parameter("ball_confidence_threshold").value
         )
         self.max_detections = int(
             self.get_parameter("max_detections").value
@@ -244,16 +252,45 @@ class Yolo26Detector(Node):
             )
         if not 0.0 <= self.confidence_threshold <= 1.0:
             raise ValueError("confidence_threshold must be between 0 and 1")
+        if not 0.0 <= self.ball_confidence_threshold <= 1.0:
+            raise ValueError(
+                "ball_confidence_threshold must be between 0 and 1"
+            )
 
         self.bridge = CvBridge()
-        self.session, self.active_provider = self._create_session(
-            str(self.get_parameter("device").value)
-        )
-        self.input_name = self.session.get_inputs()[0].name
-        input_shape = self.session.get_inputs()[0].shape
+        self.session: ort.InferenceSession | None = None
+        self.tensorrt_backend: TensorRTBackend | None = None
+        requested_device = str(self.get_parameter("device").value)
+        model_suffix = self.model_path.suffix.lower()
+        if model_suffix == ".onnx":
+            self.backend_name = "ONNX Runtime"
+            self.session, self.active_provider = self._create_session(
+                requested_device
+            )
+            self.input_name = self.session.get_inputs()[0].name
+            input_shape = self.session.get_inputs()[0].shape
+            self.class_names = self._read_class_names()
+        elif model_suffix == ".engine":
+            device = requested_device.strip().lower()
+            if device not in {"auto", "tensorrt", "cuda", "cpu"}:
+                raise ValueError("device must be auto, tensorrt, cuda, or cpu")
+            if device == "cpu":
+                self.get_logger().warning(
+                    "device=cpu is ignored for a TensorRT engine; using GPU"
+                )
+            self.backend_name = "TensorRT engine"
+            self.tensorrt_backend = TensorRTBackend(self.model_path)
+            self.active_provider = "TensorRT"
+            self.input_name = self.tensorrt_backend.input_name
+            input_shape = self.tensorrt_backend.input_shape
+            self.class_names = DEFAULT_CLASS_NAMES.copy()
+        else:
+            raise ValueError(
+                "model_path must end in .onnx or .engine; "
+                f"got {self.model_path}"
+            )
         self.input_height = self._fixed_dimension(input_shape[2], 640)
         self.input_width = self._fixed_dimension(input_shape[3], 640)
-        self.class_names = self._read_class_names()
 
         detections_topic = str(
             self.get_parameter("detections_topic").value
@@ -366,9 +403,18 @@ class Yolo26Detector(Node):
             self._apply_pending_camera_controls,
         )
         if self.display and self.show_camera_controls:
-            self._create_camera_control_panel()
+            try:
+                self._create_camera_control_panel()
+            except cv2.error as exc:
+                self.get_logger().warning(
+                    "OpenCV display unavailable; continuing with detector "
+                    f"display disabled: {exc}"
+                )
+                self.display = False
+                self.show_camera_controls = False
 
         self.get_logger().info(f"Model: {self.model_path}")
+        self.get_logger().info(f"Backend: {self.backend_name}")
         self.get_logger().info(f"Provider: {self.active_provider}")
         self.get_logger().info(
             f"Input: {self.input_width}x{self.input_height}"
@@ -1022,6 +1068,8 @@ class Yolo26Detector(Node):
         return session, active_provider
 
     def _read_class_names(self) -> list[str]:
+        if self.session is None:
+            return DEFAULT_CLASS_NAMES.copy()
         metadata = self.session.get_modelmeta().custom_metadata_map
         raw_names = metadata.get("names")
         if raw_names:
@@ -1093,14 +1141,19 @@ class Yolo26Detector(Node):
         detections: list[Detection] = []
         for prediction in predictions[: self.max_detections]:
             confidence = float(prediction[4])
-            if confidence < self.confidence_threshold:
-                continue
-
             class_id = int(round(float(prediction[5])))
             if not 0 <= class_id < len(self.class_names):
                 self.get_logger().warning(
                     f"Ignoring invalid class id: {class_id}"
                 )
+                continue
+            class_name = self.class_names[class_id]
+            confidence_threshold = (
+                self.ball_confidence_threshold
+                if class_name == "ball"
+                else self.confidence_threshold
+            )
+            if confidence < confidence_threshold:
                 continue
 
             x1, y1, x2, y2 = (float(value) for value in prediction[:4])
@@ -1119,13 +1172,24 @@ class Yolo26Detector(Node):
             detections.append(
                 Detection(
                     class_id=class_id,
-                    class_name=self.class_names[class_id],
+                    class_name=class_name,
                     confidence=confidence,
                     bbox=[left, top, right, bottom],
                     center=[(left + right) // 2, (top + bottom) // 2],
                 )
             )
         return detections
+
+    def _run_inference(self, blob: np.ndarray) -> np.ndarray:
+        """Run the selected backend while keeping one output contract."""
+        if self.tensorrt_backend is not None:
+            return self.tensorrt_backend.infer(blob)
+        if self.session is None:
+            raise RuntimeError("No inference backend is initialized")
+        outputs = self.session.run(None, {self.input_name: blob})
+        if not outputs:
+            raise RuntimeError("ONNX Runtime returned no outputs")
+        return outputs[0]
 
     @staticmethod
     def _color_for_class(class_id: int) -> tuple[int, int, int]:
@@ -1282,22 +1346,19 @@ class Yolo26Detector(Node):
         if normalized_source == "line":
             label = straight_label("") or line_labels.get(normalized_action)
             if label is None:
-                base_action, separator, level_text = (
+                base_action, separator, suffix_text = (
                     normalized_action.rpartition("_")
                 )
                 base_label = line_labels.get(base_action)
-                if (
-                    separator
-                    and base_label is not None
-                    and "_TURN_" in base_action
-                    and level_text.isdigit()
-                ):
-                    level = int(level_text)
-                    if 1 <= level <= 6:
-                        label = (
-                            f"{base_label} {level} "
-                            f"({level * 15} DEG)"
-                        )
+                suffix_angles = (
+                    {2: 15, 4: 30, 6: 45, 8: 60, 10: 75, 13: 90}
+                    if base_action.endswith("TURN_LEFT")
+                    else {4: 15, 6: 30, 8: 45, 10: 60, 12: 75, 15: 90}
+                )
+                if separator and base_label is not None and suffix_text.isdigit():
+                    angle = suffix_angles.get(int(suffix_text))
+                    if angle is not None:
+                        label = f"{base_label} ({angle} DEG)"
             return (label, (130, 105, 0)) if label is not None else None
         if normalized_source == "ball":
             label = straight_label("BALL / ") or ball_labels.get(
@@ -1384,6 +1445,13 @@ class Yolo26Detector(Node):
 
         info = self._fresh_ball_info()
         decision = self._fresh_motion_command()
+        source_command = (
+            decision.get("source_command", {})
+            if decision is not None
+            else {}
+        )
+        if not isinstance(source_command, dict):
+            source_command = {}
         if decision is None:
             planner_action = "NO COMMAND"
         else:
@@ -1461,6 +1529,25 @@ class Yolo26Detector(Node):
                 f"Planner     : {planner_action}",
                 f"State       : {state}",
             ]
+            if bool(source_command.get("tracking_active", False)):
+                recovery_phase = str(
+                    source_command.get("recovery_phase", "SEARCH")
+                ).upper()
+                last_direction = str(
+                    source_command.get("last_seen_direction", "UNKNOWN")
+                ).upper()
+                last_depth = self._number(
+                    source_command,
+                    "last_seen_depth_m",
+                )
+                rows.extend(
+                    [
+                        f"Recovery    : {recovery_phase}",
+                        f"Last side   : {last_direction}",
+                        "Last depth  : "
+                        + self._metric_text(last_depth, "m"),
+                    ]
+                )
         else:
             distance = self._number(info, "distance_m")
             depth = self._number(info, "depth_m")
@@ -1510,6 +1597,15 @@ class Yolo26Detector(Node):
             str(decision.get("action", "")) if decision is not None else ""
         )
         banner = self._action_banner(decision_source, decision_action)
+        recovery_phase = str(
+            source_command.get("recovery_phase", "")
+        ).upper()
+        if recovery_phase == "STOP":
+            banner = ("BALL LOST / HOLD", (0, 105, 190))
+        elif recovery_phase == "FORWARD":
+            banner = ("FIND BALL FORWARD", (0, 105, 190))
+        elif recovery_phase == "TIMEOUT":
+            banner = ("BALL SEARCH TIMEOUT", (0, 70, 180))
         if banner is None and detected and info is not None:
             if bool(info.get("pickup_now")):
                 banner = ("PICK UP BALL", (0, 120, 0))
@@ -1629,7 +1725,7 @@ class Yolo26Detector(Node):
                 + self._metric_text(heading, "deg", 1, signed=True),
                 "Offset norm : "
                 + self._metric_text(offset, "", 3, signed=True),
-                "Curve turn : "
+                "Turn preview: "
                 + self._metric_text(turn, "deg", 1, signed=True),
                 "Quality     : " + self._metric_text(quality, "", 3),
             ]
@@ -2101,8 +2197,7 @@ class Yolo26Detector(Node):
         info = self._fresh_hurdle_info()
         decision = self._fresh_motion_command()
         detected = bool(info and info.get("detected", False))
-        # Keep the route geometry visible while hurdle metrics own the panel;
-        # it is only a hurdle-owned reference and never a line-mode command.
+
         self._draw_line_path_geometry(image, self._fresh_line_info())
         source_command: dict[str, Any] = {}
         if decision is not None:
@@ -2353,14 +2448,18 @@ class Yolo26Detector(Node):
             if decision is not None
             else ""
         )
+        source_command = (
+            decision.get("source_command", {})
+            if decision is not None
+            else {}
+        )
+        if not isinstance(source_command, dict):
+            source_command = {}
         ball_recovery = (
             metrics_mode == "ball"
             and decision_source == "ball"
             and not ball_detected
-            and (
-                decision_action == "BALL_LOST_STOP"
-                or decision_action.startswith("RECOVER_TURN_")
-            )
+            and bool(source_command.get("tracking_active", False))
         )
         goal_recovery = (
             metrics_mode == "goal"
@@ -2476,8 +2575,8 @@ class Yolo26Detector(Node):
         try:
             image = self.bridge.imgmsg_to_cv2(message, desired_encoding="bgr8")
             blob, info = self._preprocess(image)
-            outputs = self.session.run(None, {self.input_name: blob})
-            detections = self._postprocess(outputs[0], info, image.shape)
+            output = self._run_inference(blob)
+            detections = self._postprocess(output, info, image.shape)
             elapsed = max(time.perf_counter() - started, 1e-6)
             current_fps = 1.0 / elapsed
             self.smoothed_fps = (
@@ -2487,32 +2586,37 @@ class Yolo26Detector(Node):
             )
 
             self._publish_detections(message, detections)
-            annotated = self._draw_detections(image, detections)
+            if self.publish_annotated_image or self.display:
+                annotated = self._draw_detections(image, detections)
 
-            if self.publish_annotated_image:
-                annotated_message = self.bridge.cv2_to_imgmsg(
-                    annotated, encoding="bgr8"
-                )
-                annotated_message.header = message.header
-                self.annotated_publisher.publish(annotated_message)
+                if self.publish_annotated_image:
+                    annotated_message = self.bridge.cv2_to_imgmsg(
+                        annotated, encoding="bgr8"
+                    )
+                    annotated_message.header = message.header
+                    self.annotated_publisher.publish(annotated_message)
 
-            if self.display:
-                display_image = annotated
-                if self.show_camera_controls:
-                    display_image = self._draw_camera_control_panel(annotated)
-                cv2.imshow(DISPLAY_WINDOW_NAME, display_image)
-                key = cv2.waitKey(1) & 0xFF
-                if (
-                    self.show_camera_controls
-                    and key in {ord("r"), ord("R")}
-                ):
-                    self._reset_camera_controls()
+                if self.display:
+                    display_image = annotated
+                    if self.show_camera_controls:
+                        display_image = self._draw_camera_control_panel(
+                            annotated
+                        )
+                    cv2.imshow(DISPLAY_WINDOW_NAME, display_image)
+                    key = cv2.waitKey(1) & 0xFF
+                    if (
+                        self.show_camera_controls
+                        and key in {ord("r"), ord("R")}
+                    ):
+                        self._reset_camera_controls()
         except Exception as exc:
             self.get_logger().error(f"YOLO26 inference failed: {exc}")
         finally:
             self.processing = False
 
     def destroy_node(self) -> bool:
+        if self.tensorrt_backend is not None:
+            self.tensorrt_backend.close()
         if self.display:
             cv2.destroyAllWindows()
         return super().destroy_node()
