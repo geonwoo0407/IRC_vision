@@ -4,7 +4,7 @@ ROS 2 debug visualizer for YOLO line-path analysis.
 
 Inputs
 ------
-/camera/color/image_raw
+/camera/camera/color/image_raw
     sensor_msgs/msg/Image
 
 /vision/line_info
@@ -68,7 +68,7 @@ class LinePathVisualizer(Node):
 
         self.declare_parameter(
             "image_topic",
-            "/camera/color/image_raw",
+            "/camera/camera/color/image_raw",
         )
 
         self.declare_parameter(
