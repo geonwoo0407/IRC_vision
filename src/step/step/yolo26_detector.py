@@ -106,7 +106,7 @@ class Yolo26Detector(Node):
 
         self.declare_parameter("model_path", DEFAULT_MODEL_PATH)
         self.declare_parameter(
-            "image_topic", "/camera/color/image_raw"
+            "image_topic", "/camera/camera/color/image_raw"
         )
         self.declare_parameter("detections_topic", "/vision/detections")
         self.declare_parameter(
@@ -971,11 +971,26 @@ class Yolo26Detector(Node):
         if device not in provider_preferences:
             raise ValueError("device must be auto, tensorrt, cuda, or cpu")
 
-        providers = [
-            provider
-            for provider in provider_preferences[device]
-            if provider in available
-        ]
+        trt_cache_dir = (
+            Path.home() / ".cache" / "onnxruntime" / "irc_vision_yolo26"
+        )
+        trt_cache_dir.mkdir(parents=True, exist_ok=True)
+
+        trt_options = {
+            "trt_engine_cache_enable": True,
+            "trt_engine_cache_path": str(trt_cache_dir),
+            "trt_timing_cache_enable": True,
+            "trt_timing_cache_path": str(trt_cache_dir),
+        }
+
+        providers = []
+        for provider in provider_preferences[device]:
+            if provider not in available:
+                continue
+            if provider == "TensorrtExecutionProvider":
+                providers.append((provider, trt_options))
+            else:
+                providers.append(provider)
         if not providers:
             raise RuntimeError(
                 f"No usable ONNX Runtime provider. Available: {available}"
@@ -2456,6 +2471,7 @@ class Yolo26Detector(Node):
             return
 
         self.processing = True
+        self.last_inference_time = now
         started = time.perf_counter()
         try:
             image = self.bridge.imgmsg_to_cv2(message, desired_encoding="bgr8")
@@ -2494,7 +2510,6 @@ class Yolo26Detector(Node):
         except Exception as exc:
             self.get_logger().error(f"YOLO26 inference failed: {exc}")
         finally:
-            self.last_inference_time = time.monotonic()
             self.processing = False
 
     def destroy_node(self) -> bool:

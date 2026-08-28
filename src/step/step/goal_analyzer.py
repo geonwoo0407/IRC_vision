@@ -104,11 +104,11 @@ class GoalAnalyzer(Node):
         self.declare_parameter("detections_topic", "/vision/detections")
         self.declare_parameter(
             "depth_topic",
-            "/camera/aligned_depth_to_color/image_raw",
+            "/camera/camera/aligned_depth_to_color/image_raw",
         )
         self.declare_parameter(
             "camera_info_topic",
-            "/camera/color/camera_info",
+            "/camera/camera/color/camera_info",
         )
         self.declare_parameter("output_topic", "/vision/goal_info")
         self.declare_parameter("goal_class_name", "goal")

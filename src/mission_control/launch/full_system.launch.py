@@ -20,6 +20,9 @@ def generate_launch_description() -> LaunchDescription:
     display = LaunchConfiguration("display")
     metrics_mode = LaunchConfiguration("metrics_mode")
     max_fps = LaunchConfiguration("max_fps")
+    publish_annotated_image = LaunchConfiguration(
+        "publish_annotated_image"
+    )
     initial_mission_phase = LaunchConfiguration("initial_mission_phase")
     recovery_heading_turn_deg = LaunchConfiguration(
         "recovery_heading_turn_deg"
@@ -67,10 +70,10 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(enable_camera),
         launch_arguments={
             "align_depth.enable": "true",
-            "enable_gyro": "true",
-            "enable_accel": "true",
-            "rgb_camera.color_profile": "1280,720,30",
-            "depth_module.depth_profile": "848,480,30",
+            "enable_gyro": "false",
+            "enable_accel": "false",
+            "rgb_camera.color_profile": "1280x720x30",
+            "depth_module.depth_profile": "848x480x30",
         }.items(),
     )
 
@@ -86,6 +89,10 @@ def generate_launch_description() -> LaunchDescription:
                 "display": ParameterValue(display, value_type=bool),
                 "metrics_mode": metrics_mode,
                 "max_fps": ParameterValue(max_fps, value_type=float),
+                "publish_annotated_image": ParameterValue(
+                    publish_annotated_image,
+                    value_type=bool,
+                ),
             }
         ],
     )
@@ -188,6 +195,11 @@ def generate_launch_description() -> LaunchDescription:
                 "max_fps",
                 default_value="30.0",
                 description="Maximum detector processing rate.",
+            ),
+            DeclareLaunchArgument(
+                "publish_annotated_image",
+                default_value="false",
+                description="Publish the annotated YOLO image ROS topic.",
             ),
             DeclareLaunchArgument(
                 "initial_mission_phase",
