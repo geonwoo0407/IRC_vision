@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
+from step.ball_navigation_planner import BallNavigationConfig
 from step.ball_navigation_planner import BallNavigationPlanner
 from step.goal_navigation_planner import GoalNavigationPlanner
 from step.hurdle_navigation_planner import HurdleNavigationPlanner
@@ -52,7 +53,7 @@ class MotionDecisionConfig:
     recovery_away_heading_turn_deg: float = 3.0
     curve_follow_max_offset_norm: float = 0.55
     ball_tracking_range_m: float = 1.5
-    ball_control_range_m: float = 0.9
+    ball_control_range_m: float = 1.5
     ball_lost_stop_sec: float = 0.35
     ball_recovery_timeout_sec: float = 8.0
     ball_recovery_turn_rad_s: float = 0.22
@@ -64,7 +65,6 @@ class MotionDecisionConfig:
     ball_recovery_sweep_sec: float = 1.20
     ball_recovery_direction_deadband_deg: float = 1.0
     ball_reacquire_center_deg: float = 5.0
-    ball_reacquire_center_norm: float = 0.08
     goal_tracking_range_m: float = 1.0
     goal_control_range_m: float = 0.5
     hurdle_control_range_m: float = 1.0
@@ -105,7 +105,11 @@ class MotionDecisionPlanner:
                 ),
             )
         )
-        self.ball_planner = BallNavigationPlanner()
+        self.ball_planner = BallNavigationPlanner(
+            BallNavigationConfig(
+                control_start_depth_m=self.config.ball_control_range_m,
+            )
+        )
         self.goal_planner = GoalNavigationPlanner()
         self.hurdle_planner = HurdleNavigationPlanner()
         self.previous_source = "none"
@@ -470,12 +474,6 @@ class MotionDecisionPlanner:
                 and self.ball_tracking_active
             ):
                 return self._lost_ball_recovery_command()
-            if (
-                self.config.enable_ball_lost_recovery
-                and self.ball_recovery_centering
-                and self._is_detected_ball(info)
-            ):
-                return self._reacquired_ball_centering_command(info)
             command = (
                 self.ball_planner.stop("waiting_for_ball_info")
                 if info is None
@@ -523,10 +521,15 @@ class MotionDecisionPlanner:
         self,
         info: dict[str, Any] | None,
     ) -> bool:
+        """Allow confirmed RGB alignment while keeping depth-gated travel."""
         if not self._is_detected_ball(info):
             return False
         if not bool(info.get("depth_valid", False)):
-            return False
+            # BallNavigationPlanner can turn from steering_angle_deg without
+            # depth, but it refuses forward travel until depth becomes valid.
+            # Let a confirmed RGB ball preempt LINE so that alignment starts
+            # instead of silently continuing along the line.
+            return True
         ball_range = self._ball_range_m(info)
         return bool(
             ball_range is not None
@@ -554,14 +557,15 @@ class MotionDecisionPlanner:
         reliable = detected and confidence is not None and confidence >= 0.35
 
         if reliable:
-            bearing = self._number(info, "bearing_deg")
+            bearing = self._ball_direction_error_deg(info)
             offset = self._number(info, "offset_x_norm")
             if bearing is not None:
                 self.last_ball_bearing_deg = bearing
             if offset is not None:
                 self.last_ball_offset_x_norm = offset
             depth = self._ball_range_m(info)
-            if bool(info.get("depth_valid", False)) and depth is not None:
+            depth_valid = bool(info.get("depth_valid", False))
+            if depth_valid and depth is not None:
                 self.last_ball_depth_m = depth
 
             direction_value = bearing
@@ -575,19 +579,19 @@ class MotionDecisionPlanner:
                     self.last_ball_turn_direction = "LEFT"
 
             ball_range = self._ball_range_m(info)
-            if (
-                bool(info.get("depth_valid", False))
-                and ball_range is not None
+            visual_alignment_only = not depth_valid
+            if visual_alignment_only or (
+                ball_range is not None
                 and ball_range <= self.config.ball_control_range_m
             ):
                 self.ball_tracking_active = True
             if self.ball_tracking_active:
                 self.ball_lost_elapsed_sec = 0.0
                 self.ball_recovery_timed_out = False
-                if self.ball_recovery_centering and self._ball_is_centered(
-                    info
-                ):
-                    self.ball_recovery_centering = False
+                # Detection recovery is complete as soon as a reliable ball
+                # returns. The regular ball planner must then choose the
+                # numbered TURN/STRAIGHT action from the current path angle.
+                self.ball_recovery_centering = False
             return
 
         if not self.ball_tracking_active:
@@ -703,6 +707,16 @@ class MotionDecisionPlanner:
             return None
         return self.last_ball_offset_x_norm * 35.0
 
+    def _ball_direction_error_deg(
+        self,
+        info: dict[str, Any] | None,
+    ) -> float | None:
+        """Prefer the calibrated bottom-center ball path angle."""
+        steering = self._number(info, "steering_angle_deg")
+        if steering is not None:
+            return steering
+        return self._number(info, "bearing_deg")
+
     def _ball_initial_recovery_turn_sec(
         self,
         error_deg: float | None,
@@ -729,63 +743,6 @@ class MotionDecisionPlanner:
     def _opposite_direction(direction: str) -> str:
         """Return the opposite horizontal search direction."""
         return "LEFT" if direction == "RIGHT" else "RIGHT"
-
-    def _ball_is_centered(self, info: dict[str, Any] | None) -> bool:
-        bearing = self._number(info, "bearing_deg")
-        if bearing is not None:
-            return abs(bearing) <= self.config.ball_reacquire_center_deg
-        offset = self._number(info, "offset_x_norm")
-        return bool(
-            offset is not None
-            and abs(offset) <= self.config.ball_reacquire_center_norm
-        )
-
-    def _reacquired_ball_centering_command(
-        self,
-        info: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Keep rotating after reacquisition until the ball is centered."""
-        bearing = self._number(info, "bearing_deg")
-        offset = self._number(info, "offset_x_norm")
-        direction_value = bearing
-        if direction_value is None and offset is not None:
-            direction_value = offset * 35.0
-        if direction_value is not None and direction_value < 0.0:
-            direction = "LEFT"
-            sign = -1.0
-        else:
-            direction = "RIGHT"
-            sign = 1.0
-        angular_speed = sign * self.config.ball_recovery_turn_rad_s
-        duration = self.config.ball_recovery_command_sec
-        return {
-            "valid": True,
-            "motion": f"RECOVER_TURN_{direction}",
-            "reason": "reacquired_ball_centering_in_place",
-            "linear_speed_mps": 0.0,
-            "lateral_speed_mps": 0.0,
-            "angular_speed_rad_s": round(angular_speed, 4),
-            "angular_accel_rad_s2": 0.0,
-            "command_duration_sec": round(duration, 3),
-            "travel_distance_m": 0.0,
-            "lateral_travel_distance_m": 0.0,
-            "target_heading_change_deg": round(
-                math.degrees(angular_speed * duration),
-                3,
-            ),
-            "bearing_error_deg": bearing,
-            "offset_x_norm": offset,
-            "depth_m": self._number(info, "depth_m"),
-            "distance_m": self._number(info, "distance_m"),
-            "distance_error_m": None,
-            "confidence": self._number(info, "confidence") or 0.0,
-            "depth_valid": bool(info.get("depth_valid", False)),
-            "pickup_ready": False,
-            "pickup_now": False,
-            "tracking_active": True,
-            "lost_elapsed_sec": 0.0,
-            "last_seen_direction": direction,
-        }
 
     def _clear_ball_tracking(self) -> None:
         self.ball_tracking_active = False

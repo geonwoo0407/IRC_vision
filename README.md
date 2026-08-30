@@ -178,6 +178,30 @@ YOLO의 `metrics_mode:=auto` 화면은 `/navigation/motion_command`의 실제 `s
 
 `PICKUP_NOW`, `SHOT`, `GO`는 조건에 처음 진입할 때만 `sdk_motion_requested: true`가 한 번 발생합니다. 현재 `sdk_motion_id`는 `null`이며 알고리즘/SDK 담당자와 모션 번호 계약을 확정한 뒤 매핑해야 합니다.
 
+### 공 단독 YOLO 진단
+
+전체 시스템을 종료한 뒤 아래 launch를 실행하면 같은 RealSense 영상과 같은 ONNX 모델로 공 클래스만 확인할 수 있습니다. 이 노드는 analyzer, planner, mission control을 거치지 않으며, 임계값으로 제거하기 전의 가장 높은 공 점수와 박스를 화면에 표시합니다.
+
+```bash
+cd ~/my_cv
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-select step
+source install/setup.bash
+ros2 launch step ball_only_debug.launch.py
+```
+
+화면의 `RAW BALL SCORE`가 `0.20` 이상이고 박스가 잡히면 YOLO 원시 검출은 정상이며 full system의 후처리나 상태 전환을 확인해야 합니다. 점수가 있지만 `0.20` 미만이면 모델이 공을 약하게 보고 있는 것이고, `RAW BALL: NONE`인데 `TOP ANY`에 line만 높게 나오면 현재 ONNX 모델이 그 위치의 공을 놓치는 것입니다. 결과 JSON은 다음 토픽에서도 확인할 수 있습니다.
+
+```bash
+ros2 topic echo /vision/debug/ball_only
+```
+
+RealSense를 이미 별도로 실행한 경우에만 카메라 포함 실행을 끕니다.
+
+```bash
+ros2 launch step ball_only_debug.launch.py enable_camera:=false
+```
+
 터미널 1에서 RealSense를 실행합니다.
 IMU 기반 위치추정을 같이 테스트하려면 `enable_gyro:=true`, `enable_accel:=true`를 함께 켭니다.
 
@@ -484,7 +508,7 @@ mission_map_visualizer
 
 ```text
 valid                       명령 사용 가능 여부
-motion                      STOP / STRAIGHT[_0-5] / LEFT / RIGHT / RECOVER_*_TURN_*_[1-6]
+motion                      STOP / STRAIGHT[_0-5] / LEFT / RIGHT / 번호형 RECOVER 회전
 reason                      명령 또는 정지 이유
 linear_speed_mps             목표 선속도
 lateral_speed_mps            라인 복귀용 좌우 속도(+오른쪽, -왼쪽)
@@ -495,8 +519,8 @@ travel_distance_m            유지시간 동안의 예상 직진 이동량
 lateral_travel_distance_m    유지시간 동안의 예상 좌우 이동량
 target_heading_change_deg    유지시간 동안의 예상 회전량
 recovery_side               라인이 있는 쪽(LEFT / RIGHT)
-turn_motion                 실제 회전 후보(TURN_LEFT_1~6 / TURN_RIGHT_1~6)
-turn_level                  15도 단위 회전 단계(1~6)
+turn_motion                 실제 회전 후보(좌 2/4/6/8/10/13, 우 4/6/8/10/12/15)
+turn_level                  로봇에 전달하는 좌/우 회전 모션 번호
 turn_angle_deg              단계별 목표 회전각(-90~+90도)
 steering_error_deg           heading/offset/preview를 합친 조향 오차
 line_quality                 사용된 최소 line quality
@@ -526,7 +550,7 @@ valid_for_sec                수신 측 watchdog 유효시간
 
 코너 시작점까지의 거리에는 모든 미션이 공유하는 실측 구간을 적용합니다. `0~0.130m=STRAIGHT_0`, `~0.263m=STRAIGHT_1`, `~0.427m=STRAIGHT_2`, `~0.564m=STRAIGHT_3`, `~0.680m=STRAIGHT_4`, `~0.780m=STRAIGHT_5`이며, 그보다 멀거나 기준점을 찾지 못하면 일반 `STRAIGHT`입니다. 이 번호가 실제 무보행·2/4/6/8/10걸음 중 무엇을 실행할지는 behavior/FSM이 결정합니다.
 
-실행 우선순위는 `진입 거리 안의 공/골대/허들 > 코너 기준점 접근 > 일반 라인`입니다. 따라서 라인 또는 코너 접근 중에도 공 `0.9m`, 골대 `0.5m`, 허들 `1.0m` 안의 확정 객체가 들어오면 해당 미션이 즉시 제어권을 가져갑니다. 객체 미션이 끝나 명시적으로 라인 단계로 전환된 뒤에는 일반 `LEFT/RIGHT`와 번호형 회전 명령을 다시 사용할 수 있습니다.
+실행 우선순위는 `진입 거리 안의 공/골대/허들 > 코너 기준점 접근 > 일반 라인`입니다. 따라서 라인 또는 코너 접근 중에도 공 `1.5m`, 골대 `0.5m`, 허들 `1.0m` 안의 확정 객체가 들어오면 해당 미션이 즉시 제어권을 가져갑니다. 객체 미션이 끝나 명시적으로 라인 단계로 전환된 뒤에는 일반 `LEFT/RIGHT`와 번호형 회전 명령을 다시 사용할 수 있습니다.
 
 ```bash
 ros2 run step line_navigation_controller --ros-args \
@@ -567,7 +591,7 @@ ros2 run step line_path_visualizer --ros-args \
 
 ## 공 탐지와 depth 정보
 
-`ball_analyzer`는 `yolo26_detector`가 발행한 `/vision/detections`에서 `ball`만 골라내고, RealSense aligned depth 이미지에서 공 중심 주변의 median depth를 계산합니다.
+`ball_analyzer`는 `yolo26_detector`가 발행한 `/vision/detections`에서 `ball`만 골라내고, RealSense aligned depth 이미지에서 공 중심 주변의 median depth를 계산합니다. RGB 공 검출과 depth 유효성은 서로 독립적입니다. depth가 없거나 멀어도 공은 검출·표시하며, depth는 거리 상태와 모션 제어 가능 여부에만 사용합니다.
 
 `yolo26_detector`의 기본 영상 창 오른쪽 위에는 `ball_analyzer`가
 발행한 거리, 수평 오차, 방향, 각도와 좌우 거리가 표시됩니다. 노란색
@@ -598,14 +622,18 @@ center_x, center_y
 offset_x_px, offset_y_px
 offset_x_norm, offset_y_norm
 horizontal_direction      LEFT / CENTER / RIGHT
+steering_angle_deg        보정된 화면 하단 중심→공 중심의 경로각
 bearing_deg               카메라 정면 대비 좌우 각도(+오른쪽, -왼쪽)
 elevation_deg             카메라 정면 대비 상하 각도(+아래, -위)
 depth_m                   카메라 정면축(z) 방향 거리
 lateral_offset_m          카메라 중심축에서 좌우 거리(+오른쪽, -왼쪽)
 vertical_offset_m         카메라 중심축에서 상하 거리(+아래, -위)
 horizontal_distance_m     수평면에서 카메라와 공 사이 거리
+ground_distance_m         카메라 하향각을 보정한 로봇 바닥면 수평거리
 distance_m                카메라에서 공까지 3차원 직선거리
 camera_info_ready         각도와 3D 좌표 계산 가능 여부
+robot_center_x_px         라인과 공유하는 보정된 로봇 중심선 x좌표
+robot_center_offset_px    영상 중앙에서 로봇 중심선까지의 보정값
 is_centered
 is_close
 approach_ready
@@ -621,19 +649,22 @@ candidate_count
 초기 거리 기준은 다음처럼 잡았습니다.
 
 ```text
-detect_depth_m        1.5m 이하이면 추적 대상으로 사용
-approach_depth_m      0.90m 이하이면 공 제어 전환 후보
+detect_depth_m        1.5m 이하이면 TRACK, 초과하면 FAR로 분류
+approach_depth_m      0.90m 이하이면 근접 접근 상태로 전환
 pickup_ready_depth_m  0.15m 이하 + 화면 중앙이면 집기 자세 준비
 pickup_now_depth_m    공 줍기 기준 depth 0.07m
 pickup_depth_tolerance_m depth 양방향 허용오차 ±0.02m
 pickup_center_tolerance_norm 화면 중심 허용오차 ±0.08
 pickup_target_y_ratio 화면 위에서 아래로 0.82 지점
 pickup_y_tolerance_ratio 세로 목표 허용오차 ±0.12
-horizontal_deadband_px 화면 중심 ±20px는 방향을 CENTER로 판단
-center_tolerance_px   화면 중심 ±140px 이내이면 중앙 정렬로 판단
+robot_center_offset_px 영상 중앙보다 오른쪽 70px를 로봇 중심선으로 사용
+horizontal_deadband_px 로봇 중심선 ±20px는 방향을 CENTER로 판단
+center_tolerance_px   로봇 중심선 ±140px 이내이면 중앙 정렬로 판단
 ```
 
-공이 보이더라도 `pickup_ready`는 가까운 depth와 화면 내부의 집기 목표 범위 조건이 맞아야만 `true`가 됩니다. 계산상 임시 목표점은 화면 가로 중앙, 화면 높이의 82% 지점입니다. `pickup_now`는 depth가 `0.07m ±0.02m`, 수평 오차가 `±0.08`, 세로 위치가 `0.82 ±0.12`에 모두 들어올 때만 `true`가 됩니다. 7cm에서 공이 화면 밖으로 나가면 behavior/FSM이 카메라를 아래로 내린 뒤 다시 거리와 미세보행을 판단해야 합니다.
+볼 조향에는 단순 카메라 광학 `bearing_deg` 대신 화면 맨 아래의 보정된 로봇 중심점에서 공 중심으로 이은 선과 수직 중심선 사이의 `steering_angle_deg`를 우선 사용합니다. 1280px 영상의 기본 로봇 중심은 `640 + 70 = 710px`이며 라인 분석과 같은 `robot_center_offset_px` 파라미터를 공유합니다. 따라서 공의 세로 위치가 조향각에 반영되고, 같은 가로 오차라도 가까워서 화면 아래에 있는 공을 더 큰 각도로 정렬합니다.
+
+공이 보이더라도 `pickup_ready`는 가까운 depth와 화면 내부의 집기 목표 범위 조건이 맞아야만 `true`가 됩니다. 계산상 임시 목표점은 보정된 로봇 중심선, 화면 높이의 82% 지점입니다. `pickup_now`는 depth가 `0.07m ±0.02m`, 수평 오차가 `±0.08`, 세로 위치가 `0.82 ±0.12`에 모두 들어올 때만 `true`가 됩니다. 7cm에서 공이 화면 밖으로 나가면 behavior/FSM이 카메라를 아래로 내린 뒤 다시 거리와 미세보행을 판단해야 합니다.
 
 다만 최종 모션 실행 여부는 이 노드가 아니라 mission/behavior 쪽에서 결정해야 합니다. 예를 들어 현재 미션이 `SCORE_GOAL_A`이면 `ball_info.pickup_ready`가 true여도 공줍기 명령을 무시하고, 현재 미션이 `PICK_BALL_A` 또는 `PICK_BALL_B`일 때만 공 모션을 허용하는 방식이 안전합니다.
 
@@ -681,7 +712,8 @@ ball_navigation_controller    timeout과 주기 발행 담당
 
 ```text
 valid                       명령 사용 가능 여부
-motion                      STOP / TURN_LEFT / TURN_RIGHT /
+motion                      STOP / TURN_LEFT_2/4/6/8/10/13 /
+                            TURN_RIGHT_4/6/8/10/12/15 /
                             STRAIGHT / STRAIGHT_0~5 / PICKUP_NOW
 reason                      명령 또는 정지 이유
 linear_speed_mps             목표 전진속도
@@ -691,6 +723,9 @@ angular_accel_rad_s2         제한된 각가속도
 command_duration_sec         명령 권장 유지시간
 travel_distance_m            유지시간 동안 예상 전진 이동량
 target_heading_change_deg    유지시간 동안 예상 회전량
+turn_motion                 라인 복귀와 같은 번호형 좌/우 회전 모션
+turn_level                  로봇에 전달하는 좌/우 회전 모션 번호
+turn_angle_deg              15도 단위 목표 회전각(-90~+90도)
 bearing_error_deg            공 방향 오차(+오른쪽, -왼쪽)
 offset_x_norm                화면 중심 기준 정규화 오차
 depth_m                      카메라 정면축 거리
@@ -706,8 +741,11 @@ ros2 run step ball_navigation_controller
 ros2 topic echo /navigation/ball_command
 ```
 
-기본 동작은 공이 0.90m 안으로 들어온 뒤에만 시작합니다. 공이 좌우로
-벗어나면 `TURN_LEFT/RIGHT`로 제자리 정렬하고, 정렬 후 공의 Depth Z를
+기본 동작은 공이 1.50m 안으로 들어오면 시작합니다. 공이 좌우로
+벗어나면 depth가 잠시 없어도 라인 복귀와 동일한 번호형
+`TURN_LEFT_2/4/6/8/10/13` 또는 `TURN_RIGHT_4/6/8/10/12/15`로
+제자리 정렬하고,
+정렬 후에는 유효한 공의 Depth Z를
 공통 거리 구간에 넣어 `STRAIGHT` 또는 `STRAIGHT_0~5`를 냅니다.
 화면 목표 영역과 `0.07m ±0.02m` 조건을 모두 만족하면 전진을 멈추고
 `PICKUP_NOW` 후보를 냅니다. 잘못된 0.8m `pickup_now` 입력은 planner가
@@ -727,23 +765,25 @@ ball analyzer에서는 `0.45` 이상인 동일 위치 후보가 40프레임 중 
 공을 우선하지 않습니다. 현재 거리 기반 전환 순서는 다음과 같습니다.
 
 ```text
-공 미검출                       → line 주행
-공 검출, 거리 1.5m 초과         → 분석·화면·모드 선택에서 무시
-공 검출, 0.90m < Depth <= 1.5m → TRACK ONLY, line 주행 유지
-공 검출, Depth <= 0.90m        → ball planner로 전환
+RGB 공 미검출                   → line 주행
+공 확정, 유효 depth 없음         → BALL 우선, 화면각 회전만 허용·전진 금지
+공 검출, 거리 1.5m 초과         → FAR로 표시, line 주행
+공 검출, Depth <= 1.5m         → ball planner 전환 및 공 중심 보행
+공 검출, Depth <= 0.90m        → 근접 접근 단계
 ball 전환 전 공이 사라짐         → line 주행 유지
 ball 전환 후 공이 사라짐         → ball lock 유지, 분실 복구 실행
 ```
 
-0.90m 공 제어 전환은 화면의 `Depth Z`와 동일한 `depth_m`을 기준으로
-판단합니다. `enable_ball_lost_recovery=true`가 기본값이며, 공 모드 진입
+1.50m 공 제어 전환은 화면의 `Depth Z`와 동일한 `depth_m`을 기준으로
+판단합니다. `0.90m`는 근접 접근 상태 기준으로 남겨 두었습니다. `enable_ball_lost_recovery=true`가 기본값이며, 공 모드 진입
 후 검출을 놓치면 다음 순서로 복구합니다.
 
 ```text
 0.35초                         → 일시 정지, 검출 흔들림 대기
 마지막 bearing이 중앙 밖        → 마지막 방향으로 제한 회전
-마지막 Depth 0.35~0.90m         → STRAIGHT_1 한 구간 전진
+마지막 Depth 0.35~1.50m         → STRAIGHT_1 한 구간 전진
 계속 미검출                     → 마지막 방향/반대 방향 교대 회전
+공 재검출                       → 즉시 일반 BALL TURN/STRAIGHT 판단 복귀
 8초 초과                       → ball lock을 유지하며 안전 정지
 ```
 
@@ -755,8 +795,10 @@ ball 전환 후 공이 사라짐         → ball lock 유지, 분실 복구 실
 `ball_recovery_initial_turn_max_sec`, `ball_recovery_forward_sec`,
 `ball_recovery_forward_min_depth_m`,
 `ball_recovery_forward_max_bearing_deg`, `ball_recovery_sweep_sec`,
-`ball_reacquire_center_deg`, `ball_reacquire_center_norm` 파라미터로 조정할
-수 있습니다.
+`ball_reacquire_center_deg` 파라미터로 조정할 수 있습니다. 재검출 후에는
+`RECOVER_TURN_*`을 유지하지 않고 현재 `steering_angle_deg`를 일반 볼
+planner에 전달하므로 화면에도 `FIND BALL`이 아닌 번호형 `BALL TURN`이
+표시됩니다.
 
 ## 골대 분석과 SDK 행동 신호
 
@@ -790,6 +832,7 @@ horizontal_direction       LEFT / CENTER / RIGHT
 bearing_deg                +오른쪽, -왼쪽
 depth_m                    카메라 광축 Z 거리
 distance_m                 카메라와 측정 지점 사이 직선거리
+ground_distance_m          카메라 하향각을 보정한 로봇 바닥면 수평거리
 lateral_offset_m           카메라 중심축 기준 좌우거리
 depth_sample_count         depth를 얻은 유효 샘플 지점 수
 is_centered
@@ -865,6 +908,13 @@ SDK behavior/FSM
 
 `hurdle_analyzer`는 hurdle bbox 높이의 약 55% 지점에서 가로 방향 5개 위치의 depth patch를 측정합니다. 각 patch는 유효 depth의 median을 사용하고, 전체 대표 depth도 유효한 5개 값의 median으로 정해 일부 구멍이나 반사 노이즈 영향을 줄입니다.
 
+허들은 원시 YOLO confidence `0.20` 이상부터 bbox를 화면과
+`/vision/detections`에 유지하고, analyzer는 `0.45` 이상인 동일 위치
+후보가 40프레임 중 24회 관측되면 확정합니다. RGB bbox와 depth 조건은
+분리되어 있으므로 depth가 없더라도 `RAW/CANDIDATE/CONFIRMED` bbox는
+사라지지 않습니다. 단, 허들 제어권과 `GO`는 유효 depth, 1.0m 범위,
+라인 교차 기준점, 평행·거리 조건을 모두 만족해야만 허용됩니다.
+
 주요 출력값은 다음과 같습니다.
 
 ```text
@@ -873,6 +923,7 @@ center_x, center_y, bbox
 depth_m                         카메라 광축 Z 거리
 distance_m                      depth와 픽셀 좌표로 복원한 3D 직선거리
 ground_gap_m                    카메라 아래 바닥점과 허들 사이 거리
+ground_distance_m               화면 공통 표기용 ground_gap_m 동일값
 camera_bottom_gap_px            화면 하단과 hurdle bbox 하단의 픽셀 간격
 camera_bottom_gap_m             위 픽셀 간격을 depth로 환산한 길이
 estimated_width_m               bbox 폭과 depth로 계산한 허들 추정 폭
@@ -943,17 +994,17 @@ HurdleAnalyzer
 
 | phase 형태 | 동작 |
 |---|---|
-| `AUTO` | 추적 범위는 공 1.5m/골대 1.0m/허들 1.0m, 제어 전환은 각각 0.90m/0.50m/1.0m 안에서만 수행 |
-| `BALL_SEARCH` | 0.90~1.5m에서는 추적만 하며 line 주행, 0.90m 안에서 ball planner 전환 |
+| `AUTO` | 제어 전환은 공 1.5m/골대 0.50m/허들 1.0m 안에서 수행 |
+| `BALL_SEARCH` | 공이 1.5m 안으로 들어오면 ball planner로 전환 |
 | `GOAL_SEARCH` | 0.50~1.0m backboard는 기억하면서 line 주행, 0.50m 안에서 goal planner 전환 |
 | `HURDLE_SEARCH` | 1.0m 안의 확정된 허들만 hurdle planner로 전환, 그 밖에서는 line 주행 |
 | `BALL_APPROACH`, `GOAL_APPROACH`, `HURDLE_APPROACH` | 해당 객체 planner에 집중 |
-| `LINE_TRACK` | 기본은 line/corner planner, 단 공 0.90m·골대 0.50m·허들 1.0m 안의 미션 객체가 들어오면 즉시 객체 planner로 전환 |
+| `LINE_TRACK` | 기본은 line/corner planner, 단 공 1.5m·골대 0.50m·허들 1.0m 안의 미션 객체가 들어오면 즉시 객체 planner로 전환 |
 | `PICK_LOCK`, `SHOOT_LOCK`, `HURDLE_LOCK` | C++ SDK 모션이 끝날 때까지 `WAIT`; 새 이동 판단 차단 |
 
 1.0m 안에서 확정된 허들이 보이면 공·골대·라인보다 hurdle planner를 먼저 선택하고 HURDLE 상태를 잠급니다. 라인점은 허들 교차 기준점 계산에만 사용합니다. 허들 bbox 중심이나 line planner 명령은 사용하지 않으며, `GO` 이후 SDK 완료와 다음 명시적 미션 단계가 확인될 때만 잠금을 해제합니다.
 
-공은 0.90m, 골대는 0.50m 제어 범위에 들어오면 각각 BALL/GOAL 상태를 잠급니다. 잠금 뒤 객체가 잠깐 사라져도 line planner로 되돌아가지 않습니다. 공은 마지막 위치 기반 전진·회전 재탐색, 골대는 STOP/WAIT 또는 회전 재탐색을 사용합니다. `PICKUP_NOW`/`SHOT` 완료 뒤 다음 미션 단계가 명시적으로 들어와야 잠금을 해제합니다.
+공은 1.50m, 골대는 0.50m 제어 범위에 들어오면 각각 BALL/GOAL 상태를 잠급니다. 잠금 뒤 객체가 잠깐 사라져도 line planner로 되돌아가지 않습니다. 공은 마지막 위치 기반 전진·회전 재탐색, 골대는 STOP/WAIT 또는 회전 재탐색을 사용합니다. `PICKUP_NOW`/`SHOT` 완료 뒤 다음 미션 단계가 명시적으로 들어와야 잠금을 해제합니다.
 
 모든 입력은 기본 0.5초 timeout을 사용합니다. 오래된 정보는 선택 대상에서 제외하므로 멈춘 analyzer의 마지막 검출값으로 계속 움직이는 것을 방지합니다.
 

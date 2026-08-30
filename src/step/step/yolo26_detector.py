@@ -29,6 +29,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
+from step.line_navigation_planner import numbered_turn_motion_metadata
 from step.tensorrt_backend import TensorRTBackend
 
 
@@ -121,7 +122,7 @@ class Yolo26Detector(Node):
         self.declare_parameter("ball_info_timeout_sec", 0.8)
         self.declare_parameter("show_ball_metrics", True)
         self.declare_parameter("ball_tracking_range_m", 1.5)
-        self.declare_parameter("ball_control_range_m", 0.9)
+        self.declare_parameter("ball_control_range_m", 1.5)
         self.declare_parameter("goal_info_topic", "/vision/goal_info")
         self.declare_parameter("goal_info_timeout_sec", 0.8)
         self.declare_parameter("show_goal_metrics", True)
@@ -139,9 +140,10 @@ class Yolo26Detector(Node):
         self.declare_parameter("motion_command_timeout_sec", 0.8)
         self.declare_parameter("metrics_mode", "auto")
         self.declare_parameter("confidence_threshold", 0.25)
-        # Keep the global threshold conservative while allowing the smaller,
-        # intermittently occluded ball to survive a slightly lower score.
+        # Keep the global threshold conservative while allowing mission
+        # targets to survive weaker scores without lowering line/goal gates.
         self.declare_parameter("ball_confidence_threshold", 0.20)
+        self.declare_parameter("hurdle_confidence_threshold", 0.20)
         self.declare_parameter("max_detections", 300)
         self.declare_parameter("max_fps", 15.0)
         self.declare_parameter("device", "auto")
@@ -159,6 +161,9 @@ class Yolo26Detector(Node):
         )
         self.ball_confidence_threshold = float(
             self.get_parameter("ball_confidence_threshold").value
+        )
+        self.hurdle_confidence_threshold = float(
+            self.get_parameter("hurdle_confidence_threshold").value
         )
         self.max_detections = int(
             self.get_parameter("max_detections").value
@@ -255,6 +260,10 @@ class Yolo26Detector(Node):
         if not 0.0 <= self.ball_confidence_threshold <= 1.0:
             raise ValueError(
                 "ball_confidence_threshold must be between 0 and 1"
+            )
+        if not 0.0 <= self.hurdle_confidence_threshold <= 1.0:
+            raise ValueError(
+                "hurdle_confidence_threshold must be between 0 and 1"
             )
 
         self.bridge = CvBridge()
@@ -512,7 +521,7 @@ class Yolo26Detector(Node):
         )
 
     def _create_camera_control_panel(self) -> None:
-        """Create the YOLO window and attach the compact panel mouse handler."""
+        """Create the YOLO window and attach its panel mouse handler."""
         cv2.namedWindow(DISPLAY_WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
         cv2.setMouseCallback(
             DISPLAY_WINDOW_NAME,
@@ -691,7 +700,10 @@ class Yolo26Detector(Node):
             cv2.LINE_AA,
         )
 
-        specs = {spec.parameter_name: spec for spec in self.camera_control_specs}
+        specs = {
+            spec.parameter_name: spec
+            for spec in self.camera_control_specs
+        }
         columns = (
             (
                 "rgb_camera.enable_auto_exposure",
@@ -1148,10 +1160,13 @@ class Yolo26Detector(Node):
                 )
                 continue
             class_name = self.class_names[class_id]
-            confidence_threshold = (
-                self.ball_confidence_threshold
-                if class_name == "ball"
-                else self.confidence_threshold
+            class_thresholds = {
+                "ball": self.ball_confidence_threshold,
+                "hurdle": self.hurdle_confidence_threshold,
+            }
+            confidence_threshold = class_thresholds.get(
+                class_name,
+                self.confidence_threshold,
             )
             if confidence < confidence_threshold:
                 continue
@@ -1235,12 +1250,36 @@ class Yolo26Detector(Node):
         hurdle_info: dict[str, Any] | None,
     ) -> tuple[bool, bool, float | None]:
         """Return display visibility, control readiness, and target depth."""
+        # A raw RGB ball detection must remain visible independently of depth.
+        # ``ball_info`` only supplies confirmation and optional range metadata;
+        # valid in-range depth is still required before motion control starts.
+        if class_name == "ball":
+            if ball_info is None:
+                return True, False, None
+            depth = self._number(ball_info, "depth_m")
+            depth_valid = bool(ball_info.get("depth_valid", False))
+            control_ready = bool(
+                ball_info.get("detected", False)
+                and depth_valid
+                and depth is not None
+                and depth <= self.ball_control_range_m
+            )
+            return True, control_ready, depth if depth_valid else None
+
+        if class_name == "hurdle":
+            if hurdle_info is None:
+                return True, False, None
+            depth = self._number(hurdle_info, "depth_m")
+            depth_valid = bool(hurdle_info.get("depth_valid", False))
+            control_ready = bool(
+                hurdle_info.get("detected", False)
+                and depth_valid
+                and depth is not None
+                and depth <= self.hurdle_control_range_m
+            )
+            return True, control_ready, depth if depth_valid else None
+
         settings = {
-            "ball": (
-                ball_info,
-                self.ball_tracking_range_m,
-                self.ball_control_range_m,
-            ),
             "goal": (
                 goal_info,
                 self.goal_tracking_range_m,
@@ -1250,11 +1289,6 @@ class Yolo26Detector(Node):
                 goal_info,
                 self.goal_tracking_range_m,
                 self.goal_control_range_m,
-            ),
-            "hurdle": (
-                hurdle_info,
-                self.hurdle_tracking_range_m,
-                self.hurdle_control_range_m,
             ),
         }
         setting = settings.get(class_name)
@@ -1355,7 +1389,11 @@ class Yolo26Detector(Node):
                     if base_action.endswith("TURN_LEFT")
                     else {4: 15, 6: 30, 8: 45, 10: 60, 12: 75, 15: 90}
                 )
-                if separator and base_label is not None and suffix_text.isdigit():
+                if (
+                    separator
+                    and base_label is not None
+                    and suffix_text.isdigit()
+                ):
                     angle = suffix_angles.get(int(suffix_text))
                     if angle is not None:
                         label = f"{base_label} ({angle} DEG)"
@@ -1364,6 +1402,18 @@ class Yolo26Detector(Node):
             label = straight_label("BALL / ") or ball_labels.get(
                 normalized_action
             )
+            turn_motion, _, turn_angle_deg = numbered_turn_motion_metadata(
+                normalized_action
+            )
+            if label is None and turn_motion is not None:
+                turn_direction = (
+                    "LEFT" if turn_angle_deg is not None and turn_angle_deg < 0
+                    else "RIGHT"
+                )
+                label = (
+                    f"BALL TURN {turn_direction} "
+                    f"({abs(int(turn_angle_deg or 0))} DEG)"
+                )
             if label is None:
                 return None
             color = (
@@ -1432,7 +1482,21 @@ class Yolo26Detector(Node):
             return
 
         height, width = image.shape[:2]
-        center_x = width // 2
+        info = self._fresh_ball_info()
+        calibrated_center_x = (
+            self._number(info, "robot_center_x_px")
+            if info is not None
+            else None
+        )
+        center_x = int(
+            np.clip(
+                round(calibrated_center_x)
+                if calibrated_center_x is not None
+                else width // 2,
+                0,
+                width - 1,
+            )
+        )
         center_color = (0, 255, 255)
         cv2.line(
             image,
@@ -1442,8 +1506,17 @@ class Yolo26Detector(Node):
             1,
             cv2.LINE_AA,
         )
+        cv2.putText(
+            image,
+            "ROBOT CENTER",
+            (min(center_x + 10, width - 180), max(45, int(height * 0.42))),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            center_color,
+            1,
+            cv2.LINE_AA,
+        )
 
-        info = self._fresh_ball_info()
         decision = self._fresh_motion_command()
         source_command = (
             decision.get("source_command", {})
@@ -1467,7 +1540,7 @@ class Yolo26Detector(Node):
                 point_y = int(np.clip(round(target_y), 0, height - 1))
                 cv2.arrowedLine(
                     image,
-                    (center_x, point_y),
+                    (center_x, height - 1),
                     (point_x, point_y),
                     (0, 140, 255),
                     2,
@@ -1481,11 +1554,19 @@ class Yolo26Detector(Node):
                     digits=0,
                     signed=True,
                 )
+                steering_angle = self._number(info, "steering_angle_deg")
+                angle_text = self._metric_text(
+                    steering_angle,
+                    "deg",
+                    digits=1,
+                    signed=True,
+                )
                 text_x = min(center_x, point_x) + 8
+                text_y = max(22, (height - 1 + point_y) // 2 - 10)
                 cv2.putText(
                     image,
-                    f"dx {offset_text}",
-                    (text_x, max(22, point_y - 10)),
+                    f"dx {offset_text} / path {angle_text}",
+                    (text_x, text_y),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.55,
                     (0, 140, 255),
@@ -1494,7 +1575,7 @@ class Yolo26Detector(Node):
                 )
 
         panel_width = min(390, max(250, width - 24))
-        panel_height = 264
+        panel_height = 312
         panel_x = max(12, width - panel_width - 12)
         panel_y = 44
         panel_bottom = min(height - 8, panel_y + panel_height)
@@ -1551,9 +1632,11 @@ class Yolo26Detector(Node):
         else:
             distance = self._number(info, "distance_m")
             depth = self._number(info, "depth_m")
+            ground_distance = self._number(info, "ground_distance_m")
             offset_px = self._number(info, "offset_x_px")
             offset_norm = self._number(info, "offset_x_norm")
             bearing = self._number(info, "bearing_deg")
+            steering_angle = self._number(info, "steering_angle_deg")
             lateral = self._number(info, "lateral_offset_m")
             direction = str(info.get("horizontal_direction", "UNKNOWN"))
             state = str(info.get("state", "UNKNOWN"))
@@ -1565,12 +1648,21 @@ class Yolo26Detector(Node):
                 "Distance    : "
                 + self._metric_text(distance, "m"),
                 "Depth Z     : " + self._metric_text(depth, "m"),
+                "Ground dist : "
+                + self._metric_text(ground_distance, "m"),
                 "Offset X    : "
                 + self._metric_text(offset_px, "px", 0, signed=True),
                 "Offset norm : "
                 + self._metric_text(offset_norm, "", 3, signed=True),
                 "Bearing     : "
                 + self._metric_text(bearing, "deg", 1, signed=True),
+                "Path angle  : "
+                + self._metric_text(
+                    steering_angle,
+                    "deg",
+                    1,
+                    signed=True,
+                ),
                 "Lateral X   : "
                 + self._metric_text(lateral, "m", 3, signed=True),
                 f"Camera info : {'OK' if camera_ready else 'MISSING'}",
@@ -1657,7 +1749,7 @@ class Yolo26Detector(Node):
         info = self._fresh_line_info()
         self._draw_line_path_geometry(image, info)
         panel_width = min(410, max(270, width - 24))
-        panel_height = 310
+        panel_height = 334
         panel_x = max(12, width - panel_width - 12)
         panel_y = 44
         panel_bottom = min(height - 8, panel_y + panel_height)
@@ -2067,7 +2159,7 @@ class Yolo26Detector(Node):
                 )
 
         panel_width = min(390, max(250, width - 24))
-        panel_height = 310
+        panel_height = 334
         panel_x = max(12, width - panel_width - 12)
         panel_y = 44
         panel_bottom = min(height - 8, panel_y + panel_height)
@@ -2105,6 +2197,7 @@ class Yolo26Detector(Node):
         else:
             distance = self._number(info, "distance_m")
             depth = self._number(info, "depth_m")
+            ground_distance = self._number(info, "ground_distance_m")
             offset_px = self._number(info, "offset_x_px")
             offset_norm = self._number(info, "offset_x_norm")
             bearing = self._number(info, "bearing_deg")
@@ -2120,6 +2213,8 @@ class Yolo26Detector(Node):
                 f"Aim source  : {aim_source}",
                 "Distance    : " + self._metric_text(distance, "m"),
                 "Depth Z     : " + self._metric_text(depth, "m"),
+                "Ground dist : "
+                + self._metric_text(ground_distance, "m"),
                 "Offset X    : "
                 + self._metric_text(offset_px, "px", 0, signed=True),
                 "Offset norm : "
@@ -2207,7 +2302,7 @@ class Yolo26Detector(Node):
         self._draw_hurdle_path_reference(image, source_command)
 
         panel_width = min(410, max(260, width - 24))
-        panel_height = 334
+        panel_height = 358
         panel_x = max(12, width - panel_width - 12)
         panel_y = 44
         panel_bottom = min(height - 8, panel_y + panel_height)
@@ -2254,9 +2349,9 @@ class Yolo26Detector(Node):
                 ),
                 "Depth Z     : "
                 + self._metric_text(self._number(info, "depth_m"), "m"),
-                "Ground gap  : "
+                "Ground dist : "
                 + self._metric_text(
-                    self._number(info, "ground_gap_m"),
+                    self._number(info, "ground_distance_m"),
                     "m",
                 ),
                 "Bottom gap  : "
@@ -2503,6 +2598,12 @@ class Yolo26Detector(Node):
                 "backboard": goal_info,
                 "hurdle": hurdle_info,
             }.get(detection.class_name)
+            ground_distance = self._number(
+                confirmation_info,
+                "ground_distance_m",
+            ) if confirmation_info is not None else None
+            if ground_distance is not None:
+                label = f"{label} | GND {ground_distance:.2f}m"
             badge = self._confirmation_badge(confirmation_info)
             label = f"{label} | {badge}"
             cv2.rectangle(annotated, (left, top), (right, bottom), color, 2)

@@ -1,3 +1,6 @@
+from glob import glob
+import os
+
 from setuptools import find_packages, setup
 
 package_name = 'step'
@@ -11,6 +14,10 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/models', ['models/best.onnx']),
+        (
+            os.path.join('share', package_name, 'launch'),
+            glob('launch/*.launch.py'),
+        ),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -26,6 +33,7 @@ setup(
     entry_points={
         'console_scripts': [
             'yolo26_detector=step.yolo26_detector:main',
+            'ball_only_debug=step.ball_only_debug:main',
             'yolo_line_analyzer=step.yolo_line_analyzer:main',
             'ball_analyzer=step.ball_analyzer:main',
             'ball_navigation_controller=step.ball_navigation_controller:main',
