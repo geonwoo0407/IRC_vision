@@ -105,6 +105,28 @@ def test_raw_ball_stays_visible_without_depth_or_confirmation():
     ) == (True, False, None)
 
 
+def test_raw_goal_stays_visible_without_depth_or_confirmation():
+    """Do not hide goal or backboard RGB boxes while depth is unavailable."""
+    detector = object.__new__(Yolo26Detector)
+    detector.goal_control_range_m = 0.5
+
+    assert detector._object_range_status("goal", None, None, None) == (
+        True,
+        False,
+        None,
+    )
+    assert detector._object_range_status(
+        "backboard",
+        None,
+        {
+            "detected": True,
+            "depth_valid": False,
+            "depth_m": None,
+        },
+        None,
+    ) == (True, False, None)
+
+
 def test_ball_depth_only_controls_motion_readiness():
     """Keep near and far balls visible while gating only control readiness."""
     detector = object.__new__(Yolo26Detector)

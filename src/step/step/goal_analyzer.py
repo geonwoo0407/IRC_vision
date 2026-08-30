@@ -726,7 +726,7 @@ class GoalAnalyzer(Node):
             )
             if candidate is None:
                 continue
-            if depth_is_within_range(
+            if not candidate.depth_valid or depth_is_within_range(
                 candidate.depth_valid,
                 candidate.depth_m,
                 self.detect_depth_m,

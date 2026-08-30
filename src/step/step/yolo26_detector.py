@@ -29,8 +29,9 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
-from step.line_navigation_planner import numbered_turn_motion_metadata
 from step.tensorrt_backend import TensorRTBackend
+from step.visual_motion_advisor import numbered_turn_angle
+from step.visual_motion_advisor import VisualMotionAdvisor
 
 
 def _default_model_path() -> str:
@@ -386,6 +387,9 @@ class Yolo26Detector(Node):
         self.latest_hurdle_info_time: float | None = None
         self.latest_motion_command: dict[str, Any] | None = None
         self.latest_motion_command_time: float | None = None
+        self.visual_motion_advisor = VisualMotionAdvisor(
+            ball_control_depth_m=self.ball_control_range_m,
+        )
 
         self.camera_control_specs = self._camera_control_specs()
         self.camera_control_values = {
@@ -1266,45 +1270,26 @@ class Yolo26Detector(Node):
             )
             return True, control_ready, depth if depth_valid else None
 
-        if class_name == "hurdle":
-            if hurdle_info is None:
+        if class_name in {"goal", "backboard", "hurdle"}:
+            if class_name == "hurdle":
+                info = hurdle_info
+                control_range = self.hurdle_control_range_m
+            else:
+                info = goal_info
+                control_range = self.goal_control_range_m
+            if info is None:
                 return True, False, None
-            depth = self._number(hurdle_info, "depth_m")
-            depth_valid = bool(hurdle_info.get("depth_valid", False))
+            depth = self._number(info, "depth_m")
+            depth_valid = bool(info.get("depth_valid", False))
             control_ready = bool(
-                hurdle_info.get("detected", False)
+                info.get("detected", False)
                 and depth_valid
                 and depth is not None
-                and depth <= self.hurdle_control_range_m
+                and depth <= control_range
             )
             return True, control_ready, depth if depth_valid else None
 
-        settings = {
-            "goal": (
-                goal_info,
-                self.goal_tracking_range_m,
-                self.goal_control_range_m,
-            ),
-            "backboard": (
-                goal_info,
-                self.goal_tracking_range_m,
-                self.goal_control_range_m,
-            ),
-        }
-        setting = settings.get(class_name)
-        if setting is None:
-            return True, True, None
-        info, tracking_range, control_range = setting
-        if (
-            info is None
-            or not bool(info.get("detected", False))
-            or not bool(info.get("depth_valid", False))
-        ):
-            return False, False, None
-        depth = self._number(info, "depth_m")
-        if depth is None or depth > tracking_range:
-            return False, False, depth
-        return True, depth <= control_range, depth
+        return True, True, None
 
     @staticmethod
     def _metric_text(
@@ -1347,6 +1332,14 @@ class Yolo26Detector(Node):
             "BALL_LOST_STOP": "BALL STOP",
             "RECOVER_TURN_LEFT": "FIND BALL LEFT",
             "RECOVER_TURN_RIGHT": "FIND BALL RIGHT",
+            "FIND_BALL_LEFT": "FIND BALL LEFT",
+            "FIND_BALL_RIGHT": "FIND BALL RIGHT",
+            "FIND_BALL_FORWARD": "FIND BALL FORWARD",
+            "BALL_LOST_HOLD": "BALL LOST / HOLD",
+            "BALL_SEARCH_TIMEOUT": "BALL SEARCH TIMEOUT",
+            "WAIT_CONFIRMATION": "BALL CANDIDATE / HOLD",
+            "HOLD_NO_DEPTH": "BALL HOLD / NO DEPTH",
+            "TRACK_ONLY": "BALL TRACK ONLY",
             "STOP": "BALL STOP",
         }
         goal_labels = {
@@ -1356,6 +1349,8 @@ class Yolo26Detector(Node):
             "SHOT": "SHOOT",
             "WAIT": "GOAL WAIT",
             "WAIT_SCORE_CONFIRMATION": "GOAL HOLD",
+            "WAIT_CONFIRMATION": "GOAL CANDIDATE / HOLD",
+            "HOLD_NO_DEPTH": "GOAL HOLD / NO DEPTH",
         }
         hurdle_labels = {
             "TURN_LEFT": "HURDLE TURN LEFT",
@@ -1365,6 +1360,8 @@ class Yolo26Detector(Node):
             "GO": "HURDLE GO",
             "WAIT": "HURDLE WAIT",
             "WAIT_GO_CONFIRMATION": "HURDLE HOLD",
+            "WAIT_CONFIRMATION": "HURDLE CANDIDATE / HOLD",
+            "HOLD_NO_DEPTH": "HURDLE HOLD / NO DEPTH",
         }
 
         def straight_label(prefix: str) -> str | None:
@@ -1402,12 +1399,10 @@ class Yolo26Detector(Node):
             label = straight_label("BALL / ") or ball_labels.get(
                 normalized_action
             )
-            turn_motion, _, turn_angle_deg = numbered_turn_motion_metadata(
-                normalized_action
-            )
-            if label is None and turn_motion is not None:
+            turn_angle_deg = numbered_turn_angle(normalized_action)
+            if label is None and turn_angle_deg is not None:
                 turn_direction = (
-                    "LEFT" if turn_angle_deg is not None and turn_angle_deg < 0
+                    "LEFT" if turn_angle_deg < 0
                     else "RIGHT"
                 )
                 label = (
@@ -1517,20 +1512,14 @@ class Yolo26Detector(Node):
             cv2.LINE_AA,
         )
 
-        decision = self._fresh_motion_command()
-        source_command = (
-            decision.get("source_command", {})
-            if decision is not None
-            else {}
+        suggestion = self.visual_motion_advisor.suggest_ball(
+            info,
+            now=time.monotonic(),
+            observation_time=self.latest_ball_info_time,
         )
-        if not isinstance(source_command, dict):
-            source_command = {}
-        if decision is None:
-            planner_action = "NO COMMAND"
-        else:
-            planner_source = str(decision.get("source", "none")).upper()
-            selected_action = str(decision.get("action", "WAIT")).upper()
-            planner_action = f"{planner_source} / {selected_action}"
+        suggested_action = (
+            suggestion.action if suggestion is not None else "NONE"
+        )
         detected = bool(info and info.get("detected", False))
         if detected and info is not None:
             target_x = self._number(info, "center_x")
@@ -1600,33 +1589,27 @@ class Yolo26Detector(Node):
         if info is None:
             rows = [
                 "BALL METRICS",
-                f"Planner     : {planner_action}",
+                f"Suggested   : {suggested_action}",
                 "NO BALL INFO",
             ]
         elif not detected:
             state = str(info.get("state", "SEARCH"))
             rows = [
                 "BALL METRICS",
-                f"Planner     : {planner_action}",
+                f"Suggested   : {suggested_action}",
                 f"State       : {state}",
             ]
-            if bool(source_command.get("tracking_active", False)):
-                recovery_phase = str(
-                    source_command.get("recovery_phase", "SEARCH")
-                ).upper()
-                last_direction = str(
-                    source_command.get("last_seen_direction", "UNKNOWN")
-                ).upper()
-                last_depth = self._number(
-                    source_command,
-                    "last_seen_depth_m",
-                )
+            if suggestion is not None:
                 rows.extend(
                     [
-                        f"Recovery    : {recovery_phase}",
-                        f"Last side   : {last_direction}",
+                        f"Reason      : {suggestion.reason}",
+                        "Last side   : "
+                        + self.visual_motion_advisor.last_ball_side,
                         "Last depth  : "
-                        + self._metric_text(last_depth, "m"),
+                        + self._metric_text(
+                            self.visual_motion_advisor.last_ball_depth_m,
+                            "m",
+                        ),
                     ]
                 )
         else:
@@ -1643,7 +1626,7 @@ class Yolo26Detector(Node):
             camera_ready = bool(info.get("camera_info_ready", False))
             rows = [
                 "BALL METRICS",
-                f"Planner     : {planner_action}",
+                f"Suggested   : {suggested_action}",
                 f"State       : {state} / {direction}",
                 "Distance    : "
                 + self._metric_text(distance, "m"),
@@ -1682,44 +1665,29 @@ class Yolo26Detector(Node):
                 cv2.LINE_AA,
             )
 
-        decision_source = (
-            str(decision.get("source", "")) if decision is not None else ""
-        )
-        decision_action = (
-            str(decision.get("action", "")) if decision is not None else ""
-        )
-        banner = self._action_banner(decision_source, decision_action)
-        recovery_phase = str(
-            source_command.get("recovery_phase", "")
-        ).upper()
-        if recovery_phase == "STOP":
-            banner = ("BALL LOST / HOLD", (0, 105, 190))
-        elif recovery_phase == "FORWARD":
-            banner = ("FIND BALL FORWARD", (0, 105, 190))
-        elif recovery_phase == "TIMEOUT":
-            banner = ("BALL SEARCH TIMEOUT", (0, 70, 180))
-        if banner is None and detected and info is not None:
-            if bool(info.get("pickup_now")):
-                banner = ("PICK UP BALL", (0, 120, 0))
+        banner = self._action_banner("ball", suggested_action)
         if banner is not None:
             self._draw_action_banner(image, banner[0], banner[1])
 
     def _active_metrics_mode(self) -> str:
-        """Choose the panel that matches the planner actually in use."""
+        """Choose an observation panel without requiring a motion planner."""
         if self.metrics_mode != "auto":
             return self.metrics_mode
 
-        decision = self._fresh_motion_command()
-        if decision is not None:
-            selected = str(decision.get("source", "")).strip().lower()
-            enabled = {
-                "line": self.show_line_metrics,
-                "ball": self.show_ball_metrics,
-                "goal": self.show_goal_metrics,
-                "hurdle": self.show_hurdle_metrics,
-            }
-            if selected in enabled and enabled[selected]:
-                return selected
+        choices = (
+            ("ball", self.show_ball_metrics, self._fresh_ball_info()),
+            ("hurdle", self.show_hurdle_metrics, self._fresh_hurdle_info()),
+            ("goal", self.show_goal_metrics, self._fresh_goal_info()),
+        )
+        for mode, enabled, info in choices:
+            if enabled and info and bool(info.get("detected", False)):
+                return mode
+
+        ball_recovery_active = (
+            self.visual_motion_advisor.ball_recovery_active(time.monotonic())
+        )
+        if self.show_ball_metrics and ball_recovery_active:
+            return "ball"
 
         line_info = self._fresh_line_info()
         if (
@@ -1729,14 +1697,6 @@ class Yolo26Detector(Node):
         ):
             return "line"
 
-        choices = (
-            ("hurdle", self.show_hurdle_metrics, self._fresh_hurdle_info()),
-            ("goal", self.show_goal_metrics, self._fresh_goal_info()),
-            ("ball", self.show_ball_metrics, self._fresh_ball_info()),
-        )
-        for mode, enabled, info in choices:
-            if enabled and info and bool(info.get("detected", False)):
-                return mode
         return "line" if self.show_line_metrics else "ball"
 
     def _draw_line_metrics(self, image: np.ndarray) -> None:
@@ -2116,13 +2076,10 @@ class Yolo26Detector(Node):
         )
 
         info = self._fresh_goal_info()
-        decision = self._fresh_motion_command()
-        if decision is None:
-            planner_action = "NO COMMAND"
-        else:
-            planner_source = str(decision.get("source", "none")).upper()
-            selected_action = str(decision.get("action", "WAIT")).upper()
-            planner_action = f"{planner_source} / {selected_action}"
+        suggestion = self.visual_motion_advisor.suggest_goal(info)
+        suggested_action = (
+            suggestion.action if suggestion is not None else "NONE"
+        )
         detected = bool(info and info.get("detected", False))
         if detected and info is not None:
             target_x = self._number(info, "center_x")
@@ -2184,14 +2141,14 @@ class Yolo26Detector(Node):
         if info is None:
             rows = [
                 "GOAL METRICS",
-                f"Planner     : {planner_action}",
+                f"Suggested   : {suggested_action}",
                 "NO GOAL INFO",
             ]
         elif not detected:
             state = str(info.get("state", "SEARCH"))
             rows = [
                 "GOAL METRICS",
-                f"Planner     : {planner_action}",
+                f"Suggested   : {suggested_action}",
                 f"State       : {state}",
             ]
         else:
@@ -2208,7 +2165,7 @@ class Yolo26Detector(Node):
             state = str(info.get("state", "UNKNOWN"))
             rows = [
                 "GOAL METRICS",
-                f"Planner     : {planner_action}",
+                f"Suggested   : {suggested_action}",
                 f"State       : {state} / {direction}",
                 f"Aim source  : {aim_source}",
                 "Distance    : " + self._metric_text(distance, "m"),
@@ -2242,15 +2199,9 @@ class Yolo26Detector(Node):
                 cv2.LINE_AA,
             )
 
-        if decision is not None:
-            banner = self._action_banner(
-                str(decision.get("source", "")),
-                str(decision.get("action", "")),
-            )
-            if banner is not None and str(
-                decision.get("action", "")
-            ).upper() != "SHOT":
-                self._draw_action_banner(image, banner[0], banner[1])
+        banner = self._action_banner("goal", suggested_action)
+        if banner is not None and suggested_action != "SHOT":
+            self._draw_action_banner(image, banner[0], banner[1])
 
         if detected and info is not None and bool(info.get("score_now")):
             score_text = "SHOT"
@@ -2300,9 +2251,17 @@ class Yolo26Detector(Node):
             if isinstance(raw_source_command, dict):
                 source_command = raw_source_command
         self._draw_hurdle_path_reference(image, source_command)
+        path_offset = self._number(source_command, "path_offset_x_norm")
+        suggestion = self.visual_motion_advisor.suggest_hurdle(
+            info,
+            path_offset_x_norm=path_offset,
+        )
+        suggested_action = (
+            suggestion.action if suggestion is not None else "NONE"
+        )
 
         panel_width = min(410, max(260, width - 24))
-        panel_height = 358
+        panel_height = 382
         panel_x = max(12, width - panel_width - 12)
         panel_y = 44
         panel_bottom = min(height - 8, panel_y + panel_height)
@@ -2327,10 +2286,18 @@ class Yolo26Detector(Node):
         )
 
         if info is None:
-            rows = ["HURDLE METRICS", "NO HURDLE INFO"]
+            rows = [
+                "HURDLE METRICS",
+                f"Suggested   : {suggested_action}",
+                "NO HURDLE INFO",
+            ]
         elif not detected:
             state = str(info.get("state", "SEARCH"))
-            rows = ["HURDLE METRICS", f"State       : {state}"]
+            rows = [
+                "HURDLE METRICS",
+                f"Suggested   : {suggested_action}",
+                f"State       : {state}",
+            ]
         else:
             state = str(info.get("state", "UNKNOWN"))
             path_source = str(
@@ -2338,6 +2305,7 @@ class Yolo26Detector(Node):
             ).upper()
             rows = [
                 "HURDLE METRICS",
+                f"Suggested   : {suggested_action}",
                 f"State       : {state}",
                 f"Path ref    : {path_source}",
                 "Path offset : "
@@ -2400,15 +2368,9 @@ class Yolo26Detector(Node):
                 cv2.LINE_AA,
             )
 
-        if decision is not None:
-            banner = self._action_banner(
-                str(decision.get("source", "")),
-                str(decision.get("action", "")),
-            )
-            if banner is not None and str(
-                decision.get("action", "")
-            ).upper() != "GO":
-                self._draw_action_banner(image, banner[0], banner[1])
+        banner = self._action_banner("hurdle", suggested_action)
+        if banner is not None and suggested_action != "GO":
+            self._draw_action_banner(image, banner[0], banner[1])
 
         if detected and info is not None and bool(info.get("go_now")):
             go_text = "GO!"

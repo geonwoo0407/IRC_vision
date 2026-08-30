@@ -174,7 +174,7 @@ ros2 topic pub --once /mission/phase std_msgs/msg/String "{data: 'LINE_TRACK'}"
 ros2 topic echo /navigation/motion_command
 ```
 
-YOLO의 `metrics_mode:=auto` 화면은 `/navigation/motion_command`의 실제 `source`를 우선 표시합니다. line planner가 선택되면 `LINE METRICS`와 현재 `STRAIGHT`, `LEFT`, `RIGHT` 등의 action이 표시됩니다.
+YOLO의 `metrics_mode:=auto` 화면에서 line 패널은 기존 `/navigation/motion_command`를 표시합니다. 공·허들·골대 패널의 `Suggested`와 큰 배너는 Vision 관측값으로 만든 화면용 참고 문구이며, ROS 모션 명령을 발행하거나 알고리즘의 상태를 변경하지 않습니다.
 
 `PICKUP_NOW`, `SHOT`, `GO`는 조건에 처음 진입할 때만 `sdk_motion_requested: true`가 한 번 발생합니다. 현재 `sdk_motion_id`는 `null`이며 알고리즘/SDK 담당자와 모션 번호 계약을 확정한 뒤 매핑해야 합니다.
 
@@ -508,7 +508,7 @@ mission_map_visualizer
 
 ```text
 valid                       명령 사용 가능 여부
-motion                      STOP / STRAIGHT[_0-5] / LEFT / RIGHT / 번호형 RECOVER 회전
+motion                      STOP / STRAIGHT[_0-5] / LEFT / RIGHT / RECOVER_*_TURN_*_[1-6]
 reason                      명령 또는 정지 이유
 linear_speed_mps             목표 선속도
 lateral_speed_mps            라인 복귀용 좌우 속도(+오른쪽, -왼쪽)
@@ -519,8 +519,8 @@ travel_distance_m            유지시간 동안의 예상 직진 이동량
 lateral_travel_distance_m    유지시간 동안의 예상 좌우 이동량
 target_heading_change_deg    유지시간 동안의 예상 회전량
 recovery_side               라인이 있는 쪽(LEFT / RIGHT)
-turn_motion                 실제 회전 후보(좌 2/4/6/8/10/13, 우 4/6/8/10/12/15)
-turn_level                  로봇에 전달하는 좌/우 회전 모션 번호
+turn_motion                 실제 회전 후보(TURN_LEFT_1~6 / TURN_RIGHT_1~6)
+turn_level                  15도 단위 회전 단계(1~6)
 turn_angle_deg              단계별 목표 회전각(-90~+90도)
 steering_error_deg           heading/offset/preview를 합친 조향 오차
 line_quality                 사용된 최소 line quality
@@ -550,7 +550,7 @@ valid_for_sec                수신 측 watchdog 유효시간
 
 코너 시작점까지의 거리에는 모든 미션이 공유하는 실측 구간을 적용합니다. `0~0.130m=STRAIGHT_0`, `~0.263m=STRAIGHT_1`, `~0.427m=STRAIGHT_2`, `~0.564m=STRAIGHT_3`, `~0.680m=STRAIGHT_4`, `~0.780m=STRAIGHT_5`이며, 그보다 멀거나 기준점을 찾지 못하면 일반 `STRAIGHT`입니다. 이 번호가 실제 무보행·2/4/6/8/10걸음 중 무엇을 실행할지는 behavior/FSM이 결정합니다.
 
-실행 우선순위는 `진입 거리 안의 공/골대/허들 > 코너 기준점 접근 > 일반 라인`입니다. 따라서 라인 또는 코너 접근 중에도 공 `1.5m`, 골대 `0.5m`, 허들 `1.0m` 안의 확정 객체가 들어오면 해당 미션이 즉시 제어권을 가져갑니다. 객체 미션이 끝나 명시적으로 라인 단계로 전환된 뒤에는 일반 `LEFT/RIGHT`와 번호형 회전 명령을 다시 사용할 수 있습니다.
+실행 우선순위는 `진입 거리 안의 공/골대/허들 > 코너 기준점 접근 > 일반 라인`입니다. 따라서 라인 또는 코너 접근 중에도 공 `0.9m`, 골대 `0.5m`, 허들 `1.0m` 안의 확정 객체가 들어오면 해당 미션이 즉시 제어권을 가져갑니다. 객체 미션이 끝나 명시적으로 라인 단계로 전환된 뒤에는 일반 `LEFT/RIGHT`와 번호형 회전 명령을 다시 사용할 수 있습니다.
 
 ```bash
 ros2 run step line_navigation_controller --ros-args \
@@ -712,8 +712,7 @@ ball_navigation_controller    timeout과 주기 발행 담당
 
 ```text
 valid                       명령 사용 가능 여부
-motion                      STOP / TURN_LEFT_2/4/6/8/10/13 /
-                            TURN_RIGHT_4/6/8/10/12/15 /
+motion                      STOP / TURN_LEFT / TURN_RIGHT /
                             STRAIGHT / STRAIGHT_0~5 / PICKUP_NOW
 reason                      명령 또는 정지 이유
 linear_speed_mps             목표 전진속도
@@ -723,9 +722,6 @@ angular_accel_rad_s2         제한된 각가속도
 command_duration_sec         명령 권장 유지시간
 travel_distance_m            유지시간 동안 예상 전진 이동량
 target_heading_change_deg    유지시간 동안 예상 회전량
-turn_motion                 라인 복귀와 같은 번호형 좌/우 회전 모션
-turn_level                  로봇에 전달하는 좌/우 회전 모션 번호
-turn_angle_deg              15도 단위 목표 회전각(-90~+90도)
 bearing_error_deg            공 방향 오차(+오른쪽, -왼쪽)
 offset_x_norm                화면 중심 기준 정규화 오차
 depth_m                      카메라 정면축 거리
@@ -741,11 +737,8 @@ ros2 run step ball_navigation_controller
 ros2 topic echo /navigation/ball_command
 ```
 
-기본 동작은 공이 1.50m 안으로 들어오면 시작합니다. 공이 좌우로
-벗어나면 depth가 잠시 없어도 라인 복귀와 동일한 번호형
-`TURN_LEFT_2/4/6/8/10/13` 또는 `TURN_RIGHT_4/6/8/10/12/15`로
-제자리 정렬하고,
-정렬 후에는 유효한 공의 Depth Z를
+기본 동작은 공이 0.90m 안으로 들어온 뒤에만 시작합니다. 공이 좌우로
+벗어나면 `TURN_LEFT/RIGHT`로 제자리 정렬하고, 정렬 후 공의 Depth Z를
 공통 거리 구간에 넣어 `STRAIGHT` 또는 `STRAIGHT_0~5`를 냅니다.
 화면 목표 영역과 `0.07m ±0.02m` 조건을 모두 만족하면 전진을 멈추고
 `PICKUP_NOW` 후보를 냅니다. 잘못된 0.8m `pickup_now` 입력은 planner가
@@ -765,25 +758,23 @@ ball analyzer에서는 `0.45` 이상인 동일 위치 후보가 40프레임 중 
 공을 우선하지 않습니다. 현재 거리 기반 전환 순서는 다음과 같습니다.
 
 ```text
-RGB 공 미검출                   → line 주행
-공 확정, 유효 depth 없음         → BALL 우선, 화면각 회전만 허용·전진 금지
-공 검출, 거리 1.5m 초과         → FAR로 표시, line 주행
-공 검출, Depth <= 1.5m         → ball planner 전환 및 공 중심 보행
-공 검출, Depth <= 0.90m        → 근접 접근 단계
+공 미검출                       → line 주행
+공 검출, 거리 1.5m 초과         → 분석·화면·모드 선택에서 무시
+공 검출, 0.90m < Depth <= 1.5m → TRACK ONLY, line 주행 유지
+공 검출, Depth <= 0.90m        → ball planner로 전환
 ball 전환 전 공이 사라짐         → line 주행 유지
 ball 전환 후 공이 사라짐         → ball lock 유지, 분실 복구 실행
 ```
 
-1.50m 공 제어 전환은 화면의 `Depth Z`와 동일한 `depth_m`을 기준으로
-판단합니다. `0.90m`는 근접 접근 상태 기준으로 남겨 두었습니다. `enable_ball_lost_recovery=true`가 기본값이며, 공 모드 진입
+0.90m 공 제어 전환은 화면의 `Depth Z`와 동일한 `depth_m`을 기준으로
+판단합니다. `enable_ball_lost_recovery=true`가 기본값이며, 공 모드 진입
 후 검출을 놓치면 다음 순서로 복구합니다.
 
 ```text
 0.35초                         → 일시 정지, 검출 흔들림 대기
 마지막 bearing이 중앙 밖        → 마지막 방향으로 제한 회전
-마지막 Depth 0.35~1.50m         → STRAIGHT_1 한 구간 전진
+마지막 Depth 0.35~0.90m         → STRAIGHT_1 한 구간 전진
 계속 미검출                     → 마지막 방향/반대 방향 교대 회전
-공 재검출                       → 즉시 일반 BALL TURN/STRAIGHT 판단 복귀
 8초 초과                       → ball lock을 유지하며 안전 정지
 ```
 
@@ -795,10 +786,8 @@ ball 전환 후 공이 사라짐         → ball lock 유지, 분실 복구 실
 `ball_recovery_initial_turn_max_sec`, `ball_recovery_forward_sec`,
 `ball_recovery_forward_min_depth_m`,
 `ball_recovery_forward_max_bearing_deg`, `ball_recovery_sweep_sec`,
-`ball_reacquire_center_deg` 파라미터로 조정할 수 있습니다. 재검출 후에는
-`RECOVER_TURN_*`을 유지하지 않고 현재 `steering_angle_deg`를 일반 볼
-planner에 전달하므로 화면에도 `FIND BALL`이 아닌 번호형 `BALL TURN`이
-표시됩니다.
+`ball_reacquire_center_deg`, `ball_reacquire_center_norm` 파라미터로 조정할
+수 있습니다.
 
 ## 골대 분석과 SDK 행동 신호
 
@@ -994,17 +983,17 @@ HurdleAnalyzer
 
 | phase 형태 | 동작 |
 |---|---|
-| `AUTO` | 제어 전환은 공 1.5m/골대 0.50m/허들 1.0m 안에서 수행 |
-| `BALL_SEARCH` | 공이 1.5m 안으로 들어오면 ball planner로 전환 |
+| `AUTO` | 추적 범위는 공 1.5m/골대 1.0m/허들 1.0m, 제어 전환은 각각 0.90m/0.50m/1.0m 안에서만 수행 |
+| `BALL_SEARCH` | 0.90~1.5m에서는 추적만 하며 line 주행, 0.90m 안에서 ball planner 전환 |
 | `GOAL_SEARCH` | 0.50~1.0m backboard는 기억하면서 line 주행, 0.50m 안에서 goal planner 전환 |
 | `HURDLE_SEARCH` | 1.0m 안의 확정된 허들만 hurdle planner로 전환, 그 밖에서는 line 주행 |
 | `BALL_APPROACH`, `GOAL_APPROACH`, `HURDLE_APPROACH` | 해당 객체 planner에 집중 |
-| `LINE_TRACK` | 기본은 line/corner planner, 단 공 1.5m·골대 0.50m·허들 1.0m 안의 미션 객체가 들어오면 즉시 객체 planner로 전환 |
+| `LINE_TRACK` | 기본은 line/corner planner, 단 공 0.90m·골대 0.50m·허들 1.0m 안의 미션 객체가 들어오면 즉시 객체 planner로 전환 |
 | `PICK_LOCK`, `SHOOT_LOCK`, `HURDLE_LOCK` | C++ SDK 모션이 끝날 때까지 `WAIT`; 새 이동 판단 차단 |
 
 1.0m 안에서 확정된 허들이 보이면 공·골대·라인보다 hurdle planner를 먼저 선택하고 HURDLE 상태를 잠급니다. 라인점은 허들 교차 기준점 계산에만 사용합니다. 허들 bbox 중심이나 line planner 명령은 사용하지 않으며, `GO` 이후 SDK 완료와 다음 명시적 미션 단계가 확인될 때만 잠금을 해제합니다.
 
-공은 1.50m, 골대는 0.50m 제어 범위에 들어오면 각각 BALL/GOAL 상태를 잠급니다. 잠금 뒤 객체가 잠깐 사라져도 line planner로 되돌아가지 않습니다. 공은 마지막 위치 기반 전진·회전 재탐색, 골대는 STOP/WAIT 또는 회전 재탐색을 사용합니다. `PICKUP_NOW`/`SHOT` 완료 뒤 다음 미션 단계가 명시적으로 들어와야 잠금을 해제합니다.
+공은 0.90m, 골대는 0.50m 제어 범위에 들어오면 각각 BALL/GOAL 상태를 잠급니다. 잠금 뒤 객체가 잠깐 사라져도 line planner로 되돌아가지 않습니다. 공은 마지막 위치 기반 전진·회전 재탐색, 골대는 STOP/WAIT 또는 회전 재탐색을 사용합니다. `PICKUP_NOW`/`SHOT` 완료 뒤 다음 미션 단계가 명시적으로 들어와야 잠금을 해제합니다.
 
 모든 입력은 기본 0.5초 timeout을 사용합니다. 오래된 정보는 선택 대상에서 제외하므로 멈춘 analyzer의 마지막 검출값으로 계속 움직이는 것을 방지합니다.
 

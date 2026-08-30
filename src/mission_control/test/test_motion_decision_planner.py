@@ -158,7 +158,7 @@ def test_blocking_hurdle_has_priority_over_close_ball():
     [
         (
             "ball",
-            ball_info(depth_m=1.2, distance_m=1.2),
+            ball_info(depth_m=0.85, distance_m=0.85),
             "ball",
         ),
         (
@@ -199,7 +199,7 @@ def test_control_range_mission_preempts_corner_during_line_phase(
     [
         (
             "ball",
-            ball_info(depth_m=1.501, distance_m=1.501),
+            ball_info(depth_m=0.91, distance_m=0.91),
         ),
         (
             "goal",
@@ -368,7 +368,7 @@ def test_hurdle_without_depth_falls_back_to_line_direction():
     assert decision.reason == "line_tracking"
 
 
-def test_ball_inside_1_5m_preempts_line_in_auto():
+def test_ball_between_control_and_tracking_range_keeps_line():
     planner = MotionDecisionPlanner()
 
     decision = planner.plan(
@@ -380,61 +380,12 @@ def test_ball_inside_1_5m_preempts_line_in_auto():
         0.1,
     )
 
-    assert decision.source == "ball"
+    assert decision.source == "line"
     assert decision.action == "STRAIGHT"
-    assert planner.ball_tracking_active is True
+    assert planner.ball_tracking_active is False
 
 
-def test_confirmed_ball_without_depth_preempts_line_for_visual_turn():
-    planner = MotionDecisionPlanner()
-
-    decision = planner.plan(
-        "AUTO",
-        observations(
-            line=line_info(),
-            ball=ball_info(
-                depth_valid=False,
-                depth_m=None,
-                distance_m=None,
-                steering_angle_deg=30.0,
-            ),
-        ),
-        0.1,
-    )
-
-    assert decision.source == "ball"
-    assert decision.action == "TURN_RIGHT_6"
-    assert decision.reason == "align_ball_center"
-    assert decision.source_command["linear_speed_mps"] == 0.0
-    assert decision.source_command["depth_valid"] is False
-    assert planner.ball_lock_active is True
-    assert planner.ball_tracking_active is True
-
-
-def test_centered_ball_without_depth_preempts_line_but_cannot_advance():
-    planner = MotionDecisionPlanner()
-
-    decision = planner.plan(
-        "AUTO",
-        observations(
-            line=line_info(),
-            ball=ball_info(
-                depth_valid=False,
-                depth_m=None,
-                distance_m=None,
-                steering_angle_deg=0.0,
-            ),
-        ),
-        0.1,
-    )
-
-    assert decision.source == "ball"
-    assert decision.action == "STOP"
-    assert decision.reason == "missing_valid_ball_depth"
-    assert decision.source_command["linear_speed_mps"] == 0.0
-
-
-def test_ball_search_switches_to_ball_inside_1_5m():
+def test_ball_search_keeps_line_until_ball_is_inside_90cm():
     planner = MotionDecisionPlanner()
 
     decision = planner.plan(
@@ -446,7 +397,7 @@ def test_ball_search_switches_to_ball_inside_1_5m():
         0.1,
     )
 
-    assert decision.source == "ball"
+    assert decision.source == "line"
     assert decision.action == "STRAIGHT"
 
 
@@ -466,7 +417,7 @@ def test_ball_beyond_1_5m_does_not_start_tracking_memory():
     assert planner.ball_tracking_active is False
 
 
-def test_ball_lock_at_1_2m_survives_a_later_missing_detection():
+def test_ball_leaving_tracking_range_clears_recovery_memory():
     planner = recovery_planner()
     planner.plan(
         "AUTO",
@@ -489,9 +440,8 @@ def test_ball_lock_at_1_2m_survives_a_later_missing_detection():
         0.1,
     )
 
-    assert decision.source == "ball"
-    assert decision.action == "BALL_LOST_STOP"
-    assert planner.ball_tracking_active is True
+    assert decision.source == "line"
+    assert planner.ball_tracking_active is False
 
 
 def test_missing_ball_stays_locked_and_starts_default_recovery():
@@ -734,7 +684,7 @@ def test_reacquired_ball_inside_90cm_resumes_ball_control():
     assert planner.ball_lost_elapsed_sec == 0.0
 
 
-def test_reacquired_ball_returns_to_numbered_ball_turn():
+def test_reacquired_far_ball_cannot_fall_back_to_line_after_mission_entry():
     planner = recovery_planner()
     planner.plan(
         "AUTO",
@@ -762,7 +712,6 @@ def test_reacquired_ball_returns_to_numbered_ball_turn():
                 depth_m=1.2,
                 distance_m=1.2,
                 bearing_deg=-10.0,
-                steering_angle_deg=-45.0,
             ),
         ),
         0.1,
@@ -781,12 +730,11 @@ def test_reacquired_ball_returns_to_numbered_ball_turn():
     )
 
     assert centering.source == "ball"
-    assert centering.action == "TURN_LEFT_6"
-    assert centering.reason == "align_ball_center"
+    assert centering.action == "RECOVER_TURN_LEFT"
     assert centering.source_command["linear_speed_mps"] == 0.0
     assert resumed.source == "ball"
-    assert resumed.action == "STRAIGHT"
-    assert resumed.reason == "ball_aligned_discrete_approach"
+    assert resumed.action == "STOP"
+    assert resumed.reason == "ball_outside_control_range"
     assert planner.ball_recovery_centering is False
 
 

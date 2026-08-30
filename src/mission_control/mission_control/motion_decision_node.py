@@ -43,7 +43,7 @@ class MotionDecisionNode(Node):
         self.declare_parameter("recovery_away_heading_turn_deg", 3.0)
         self.declare_parameter("curve_follow_max_offset_norm", 0.55)
         self.declare_parameter("ball_tracking_range_m", 1.5)
-        self.declare_parameter("ball_control_range_m", 1.5)
+        self.declare_parameter("ball_control_range_m", 0.9)
         self.declare_parameter("ball_lost_stop_sec", 0.35)
         self.declare_parameter("ball_recovery_timeout_sec", 8.0)
         self.declare_parameter("ball_recovery_turn_rad_s", 0.22)
@@ -57,6 +57,7 @@ class MotionDecisionNode(Node):
         )
         self.declare_parameter("ball_recovery_sweep_sec", 1.20)
         self.declare_parameter("ball_reacquire_center_deg", 5.0)
+        self.declare_parameter("ball_reacquire_center_norm", 0.08)
         self.declare_parameter("goal_tracking_range_m", 1.0)
         self.declare_parameter("goal_control_range_m", 0.5)
         self.declare_parameter("hurdle_control_range_m", 1.0)
@@ -118,6 +119,9 @@ class MotionDecisionNode(Node):
                 ),
                 ball_reacquire_center_deg=self._float_parameter(
                     "ball_reacquire_center_deg"
+                ),
+                ball_reacquire_center_norm=self._float_parameter(
+                    "ball_reacquire_center_norm"
                 ),
                 goal_tracking_range_m=self._float_parameter(
                     "goal_tracking_range_m"
